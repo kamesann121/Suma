@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>3D TPS FSB - Fixed Camera</title>
+    <title>新しいタブ</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; }
         #crosshair { 
@@ -15,7 +15,7 @@
             position: absolute; top: 50%; left: 50%;
             transform: translate(-50%, -50%);
             color: white; font-family: sans-serif; text-align: center;
-            background: rgba(0,0,0,0.6); padding: 20px; cursor: pointer; border-radius: 10px;
+            background: rgba(0,0,0,0.7); padding: 20px; cursor: pointer; border-radius: 10px;
         }
     </style>
 </head>
@@ -23,7 +23,7 @@
     <div id="crosshair"></div>
     <div id="instructions">
         <h2>TPS MODE</h2>
-        <p>クリックしてスタート<br>(WASDで移動 / Spaceでジャンプ)</p>
+        <p>クリックしてスタート<br>(左右の視点回転を180度に制限)</p>
     </div>
 
     <script type="importmap">
@@ -38,130 +38,105 @@
     <script type="module">
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-        import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js';
 
-        // --- シーン・レンダラー ---
+        // --- 基本設定 ---
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0x87CEEB);
-        scene.fog = new THREE.Fog(0x87CEEB, 20, 100);
-
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
         const renderer = new THREE.WebGLRenderer({ antialias: true });
-        renderer.setPixelRatio(window.devicePixelRatio);
         renderer.setSize(window.innerWidth, window.innerHeight);
         document.body.appendChild(renderer.domElement);
 
-        // --- ライト ---
-        scene.add(new THREE.AmbientLight(0xffffff, 0.8));
-        const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+        scene.add(new THREE.AmbientLight(0xffffff, 1.0));
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
         dirLight.position.set(5, 10, 7);
         scene.add(dirLight);
 
-        // --- 地面 ---
-        const floor = new THREE.Mesh(
-            new THREE.PlaneGeometry(500, 500),
-            new THREE.MeshStandardMaterial({ color: 0x444444 })
-        );
+        const floor = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), new THREE.MeshStandardMaterial({ color: 0x444444 }));
         floor.rotation.x = -Math.PI / 2;
         scene.add(floor);
 
-        // --- プレイヤーの構造 ---
-        const playerGroup = new THREE.Group(); // 位置管理用
+        // --- プレイヤーとカメラの管理用変数 ---
+        const playerGroup = new THREE.Group();
         scene.add(playerGroup);
 
-        const modelContainer = new THREE.Group(); // モデルの回転用
-        playerGroup.add(modelContainer);
-
-        // --- マウス操作 ---
-        // カメラではなくplayerGroupを対象にする
-        const controls = new PointerLockControls(camera, document.body);
-        const instructions = document.getElementById('instructions');
-
-        instructions.addEventListener('click', () => controls.lock());
-        controls.addEventListener('lock', () => instructions.style.display = 'none');
-        controls.addEventListener('unlock', () => instructions.style.display = 'block');
-
-        // --- モデル読み込み ---
+        let playerModel;
         const loader = new GLTFLoader();
-        let mixer;
         loader.load('./fsb.glb', (gltf) => {
-            const model = gltf.scene;
-            model.scale.set(1.5, 1.5, 1.5);
-            modelContainer.add(model);
-
-            // アニメーションがある場合は再生
-            if (gltf.animations.length > 0) {
-                mixer = new THREE.AnimationMixer(model);
-                const action = mixer.clipAction(gltf.animations[0]);
-                action.play();
-            }
+            playerModel = gltf.scene;
+            playerModel.scale.set(1.5, 1.5, 1.5);
+            // モデルが正面（0,0,1）を向くように調整（もし背中を向けたければここを調整）
+            playerGroup.add(playerModel);
         });
 
-        // --- 入力と物理 ---
-        const keys = {};
-        let velocityY = 0;
-        const gravity = -0.01;
-        const moveSpeed = 0.15;
-        const clock = new THREE.Clock();
+        // 視点回転用変数
+        let yaw = 0;   // 左右
+        let pitch = 0; // 上下
+        const minYaw = -Math.PI / 2; // -90度
+        const maxYaw = Math.PI / 2;  // +90度 (合計180度制限)
+        const minPitch = -Math.PI / 4; // 下向き制限
+        const maxPitch = Math.PI / 4;  // 上向き制限
 
+        // --- マウス操作 (Pointer Lock) ---
+        let isLocked = false;
+        document.addEventListener('click', () => {
+            document.body.requestPointerLock();
+        });
+        document.addEventListener('pointerlockchange', () => {
+            isLocked = document.pointerLockElement === document.body;
+            document.getElementById('instructions').style.display = isLocked ? 'none' : 'block';
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!isLocked) return;
+            // マウスの動きを回転に反映
+            yaw -= e.movementX * 0.002;
+            pitch -= e.movementY * 0.002;
+
+            // ★ここで「180度制限」をかける
+            yaw = Math.max(minYaw, Math.min(maxYaw, yaw));
+            // 上下も制限（のけぞり防止）
+            pitch = Math.max(minPitch, Math.min(maxPitch, pitch));
+        });
+
+        // --- 移動管理 ---
+        const keys = {};
         window.addEventListener('keydown', (e) => keys[e.code] = true);
         window.addEventListener('keyup', (e) => keys[e.code] = false);
 
+        const moveSpeed = 0.1;
+
         function animate() {
             requestAnimationFrame(animate);
-            const delta = clock.getDelta();
-            if (mixer) mixer.update(delta);
 
-            if (controls.isLocked) {
-                // 1. 重力
-                velocityY += gravity;
-                playerGroup.position.y += velocityY;
-                if (playerGroup.position.y < 0) {
-                    playerGroup.position.y = 0;
-                    velocityY = 0;
+            // 1. モデルの回転（yawのみ適用）
+            playerGroup.rotation.y = yaw;
+
+            // 2. カメラの位置計算（常にモデルの真後ろ）
+            // キャラクターから見て「後ろに4m、上に2m」の位置を計算
+            const cameraOffset = new THREE.Vector3(0, 2, 4);
+            // yaw（左右回転）とpitch（上下回転）をカメラに適用
+            const quat = new THREE.Quaternion().setFromEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
+            cameraOffset.applyQuaternion(quat);
+            
+            camera.position.copy(playerGroup.position).add(cameraOffset);
+            camera.lookAt(playerGroup.position.clone().add(new THREE.Vector3(0, 1, 0))); // キャラクターの腰あたりを見る
+
+            // 3. 移動 (WASD)
+            if (isLocked) {
+                if (keys['KeyW']) {
+                    playerGroup.position.x -= Math.sin(yaw) * moveSpeed;
+                    playerGroup.position.z -= Math.cos(yaw) * moveSpeed;
                 }
-
-                // 2. 移動 (WASD)
-                // cameraの向きに基づいて移動ベクトルを計算
-                const moveVector = new THREE.Vector3();
-                if (keys['KeyW']) moveVector.z -= 1;
-                if (keys['KeyS']) moveVector.z += 1;
-                if (keys['KeyA']) moveVector.x -= 1;
-                if (keys['KeyD']) moveVector.x += 1;
-
-                if (moveVector.length() > 0) {
-                    moveVector.normalize();
-                    // カメラの水平方向の向きを取得
-                    const angle = Math.atan2(camera.position.x - playerGroup.position.x, camera.position.z - playerGroup.position.z);
-                    
-                    // WASDの入力方向に合わせて移動
-                    playerGroup.translateOnAxis(moveVector.applyQuaternion(new THREE.Quaternion().setFromEuler(new THREE.Euler(0, camera.rotation.y, 0))), moveSpeed);
+                if (keys['KeyS']) {
+                    playerGroup.position.x += Math.sin(yaw) * moveSpeed;
+                    playerGroup.position.z += Math.cos(yaw) * moveSpeed;
                 }
-
-                // 3. ジャンプ
-                if (keys['Space'] && playerGroup.position.y <= 0.01) {
-                    velocityY = 0.2;
-                }
-
-                // 4. 【最重要】カメラとモデルの分離制御
-                // カメラの水平回転(Y軸)だけをモデルに反映（のけぞり防止）
-                modelContainer.rotation.y = camera.rotation.y;
-
-                // カメラをプレイヤーの位置に追従させつつ、後ろにオフセット
-                const cameraOffset = new THREE.Vector3(0, 1.5, 4).applyQuaternion(camera.quaternion);
-                camera.position.copy(playerGroup.position).add(cameraOffset);
             }
 
             renderer.render(scene, camera);
         }
-
         animate();
-
-        window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        });
     </script>
 </body>
 </html>
