@@ -9,17 +9,22 @@
             position: absolute; top: 50%; left: 50%; 
             width: 12px; height: 12px; border: 2px solid white; 
             border-radius: 50%; transform: translate(-50%, -50%); 
-            pointer-events: none;
+            pointer-events: none; z-index: 10;
         }
         #ui {
             position: absolute; bottom: 20px; left: 20px;
-            color: white; font-family: sans-serif; background: rgba(0,0,0,0.5); padding: 10px;
+            color: white; font-family: sans-serif; background: rgba(0,0,0,0.5); padding: 15px;
+            border-radius: 8px; line-height: 1.6;
         }
     </style>
 </head>
 <body>
     <div id="crosshair"></div>
-    <div id="ui">E:前 / S:後 / Q:左 / C:右 / Space:ジャンプ</div>
+    <div id="ui">
+        <b>CONTROLS</b><br>
+        E: 前進 / S: 後退 / Q: 左 / C: 右<br>
+        Space: ジャンプ / Click: 視点開始
+    </div>
 
     <script type="importmap">
     {
@@ -34,6 +39,7 @@
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
+        // --- シーン・カメラ ---
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0x87CEEB);
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
@@ -46,27 +52,56 @@
         dirLight.position.set(5, 10, 7);
         scene.add(dirLight);
 
-        const floor = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), new THREE.MeshStandardMaterial({ color: 0x444444 }));
+        const floor = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshStandardMaterial({ color: 0x444444 }));
         floor.rotation.x = -Math.PI / 2;
         scene.add(floor);
 
+        // --- プレイヤー構造 ---
         const playerGroup = new THREE.Group();
         scene.add(playerGroup);
         const modelContainer = new THREE.Group(); 
         playerGroup.add(modelContainer);
 
-        let playerModel;
+        let playerModel, mixer;
+        let actions = {};
+        let currentAction;
+
         const loader = new GLTFLoader();
         loader.load('./fsb.glb', (gltf) => {
             playerModel = gltf.scene;
             playerModel.scale.set(1.5, 1.5, 1.5);
             playerModel.rotation.y = Math.PI; // 前後逆を修正
             modelContainer.add(playerModel);
+
+            // アニメーション設定
+            mixer = new THREE.AnimationMixer(playerModel);
+            console.log("--- アニメーション一覧 ---");
+            gltf.animations.forEach((clip) => {
+                actions[clip.name] = mixer.clipAction(clip);
+                console.log("- " + clip.name);
+            });
+
+            // 初期アニメーション（Idleや最初のアニメ）
+            if (gltf.animations.length > 0) {
+                currentAction = actions[gltf.animations[0].name];
+                currentAction.play();
+            }
         });
 
+        // モーション切り替え関数（滑らかに繋ぐ）
+        function fadeToAction(name, duration = 0.2) {
+            if (!actions[name] || currentAction === actions[name]) return;
+            const nextAction = actions[name];
+            nextAction.reset().fadeIn(duration).play();
+            currentAction.fadeOut(duration);
+            currentAction = nextAction;
+        }
+
+        // 視点管理
         let cameraYaw = 0, cameraPitch = 0, modelYaw = 0;
         let velocityY = 0;
-        const gravity = -0.01;
+        const gravity = -0.012;
+        const clock = new THREE.Clock();
 
         document.addEventListener('click', () => document.body.requestPointerLock());
         document.addEventListener('mousemove', (e) => {
@@ -82,12 +117,14 @@
 
         function animate() {
             requestAnimationFrame(animate);
-
-            // --- キー操作判定 (E, S, Q, C) ---
-            const isMoving = keys['KeyE'] || keys['KeyS'] || keys['KeyQ'] || keys['KeyC'];
-            const moveSpeed = 0.12;
+            const delta = clock.getDelta();
+            if (mixer) mixer.update(delta); // アニメーション更新
 
             if (document.pointerLockElement === document.body) {
+                const isMoving = keys['KeyE'] || keys['KeyS'] || keys['KeyQ'] || keys['KeyC'];
+                const moveSpeed = 0.15;
+
+                // --- 移動処理 ---
                 if (keys['KeyE']) { // 前
                     playerGroup.position.x -= Math.sin(cameraYaw) * moveSpeed;
                     playerGroup.position.z -= Math.cos(cameraYaw) * moveSpeed;
@@ -105,6 +142,16 @@
                     playerGroup.position.z -= Math.sin(cameraYaw) * moveSpeed;
                 }
 
+                // --- アニメーション切り替え判定 ---
+                // ※ fsb.glb内の名前に合わせて 'Walk' や 'Idle' を書き換えてください
+                if (isMoving) {
+                    // もし名前が分からない場合は一旦 index で指定も可能
+                    // 例: fadeToAction(Object.keys(actions)[1]); 
+                    fadeToAction('Walk'); 
+                } else {
+                    fadeToAction('Idle');
+                }
+
                 // ジャンプ
                 velocityY += gravity;
                 playerGroup.position.y += velocityY;
@@ -113,25 +160,25 @@
                     velocityY = 0;
                 }
                 if (keys['Space'] && playerGroup.position.y <= 0.01) {
-                    velocityY = 0.2;
+                    velocityY = 0.25;
                 }
+
+                // 視点追従ロジック
+                let diff = cameraYaw - modelYaw;
+                while (diff < -Math.PI) diff += Math.PI * 2;
+                while (diff > Math.PI) diff -= Math.PI * 2;
+
+                const threshold = Math.PI / 2.5; 
+                if (isMoving) {
+                    modelYaw += diff * 0.15;
+                } else if (Math.abs(diff) > threshold) {
+                    modelYaw += Math.sign(diff) * (Math.abs(diff) - threshold) * 0.1;
+                }
+                modelContainer.rotation.y = modelYaw;
             }
 
-            // --- 視点追従ロジック ---
-            let diff = cameraYaw - modelYaw;
-            while (diff < -Math.PI) diff += Math.PI * 2;
-            while (diff > Math.PI) diff -= Math.PI * 2;
-
-            const threshold = Math.PI / 2.5; 
-            if (isMoving) {
-                modelYaw += diff * 0.15; // 移動中はカメラに向く
-            } else if (Math.abs(diff) > threshold) {
-                modelYaw += Math.sign(diff) * (Math.abs(diff) - threshold) * 0.1; // 遊びを超えたら追従
-            }
-            modelContainer.rotation.y = modelYaw;
-
-            // --- カメラ位置計算 ---
-            const offset = new THREE.Vector3(0, 1.8, 4.5);
+            // カメラ位置更新
+            const offset = new THREE.Vector3(0, 2, 4.5);
             const quat = new THREE.Quaternion().setFromEuler(new THREE.Euler(cameraPitch, cameraYaw, 0, 'YXZ'));
             offset.applyQuaternion(quat);
             camera.position.copy(playerGroup.position).add(offset);
