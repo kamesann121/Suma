@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>3D TPS Base - FSB</title>
+    <title>新しいタブ</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; }
         #crosshair { 
@@ -22,8 +22,8 @@
 <body>
     <div id="crosshair"></div>
     <div id="instructions">
-        <h2>TPS TEST START</h2>
-        <p>クリックして操作開始<br>(WASDで移動 / Spaceでジャンプ / Escで解除)</p>
+        <h2>TPS MODE</h2>
+        <p>クリックしてスタート<br>(WASDで移動 / Spaceでジャンプ)</p>
     </div>
 
     <script type="importmap">
@@ -40,13 +40,12 @@
         import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
         import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js';
 
-        // --- シーン・カメラ設定 ---
+        // --- シーン・レンダラー ---
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0x87CEEB);
         scene.fog = new THREE.Fog(0x87CEEB, 20, 100);
 
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-        
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setPixelRatio(window.devicePixelRatio);
         renderer.setSize(window.innerWidth, window.innerHeight);
@@ -61,21 +60,21 @@
         // --- 地面 ---
         const floor = new THREE.Mesh(
             new THREE.PlaneGeometry(500, 500),
-            new THREE.MeshStandardMaterial({ color: 0x333333 })
+            new THREE.MeshStandardMaterial({ color: 0x444444 })
         );
         floor.rotation.x = -Math.PI / 2;
         scene.add(floor);
 
-        // --- プレイヤーグループ（キャラとカメラをひとまとめにする） ---
-        const playerGroup = new THREE.Group();
+        // --- プレイヤーの構造 ---
+        const playerGroup = new THREE.Group(); // 位置管理用
         scene.add(playerGroup);
 
-        // カメラをグループに追加し、斜め後ろに配置
-        camera.position.set(0, 2.5, 5); // 横0, 高さ2.5, 後ろに5
-        playerGroup.add(camera);
+        const modelContainer = new THREE.Group(); // モデルの回転用
+        playerGroup.add(modelContainer);
 
         // --- マウス操作 ---
-        const controls = new PointerLockControls(playerGroup, document.body);
+        // カメラではなくplayerGroupを対象にする
+        const controls = new PointerLockControls(camera, document.body);
         const instructions = document.getElementById('instructions');
 
         instructions.addEventListener('click', () => controls.lock());
@@ -84,48 +83,73 @@
 
         // --- モデル読み込み ---
         const loader = new GLTFLoader();
-        let playerModel;
+        let mixer;
         loader.load('./fsb.glb', (gltf) => {
-            playerModel = gltf.scene;
-            // モデルのサイズ調整（体内に入らないよう、位置は0,0,0）
-            playerModel.scale.set(2, 2, 2); 
-            playerGroup.add(playerModel);
+            const model = gltf.scene;
+            model.scale.set(1.5, 1.5, 1.5);
+            modelContainer.add(model);
+
+            // アニメーションがある場合は再生
+            if (gltf.animations.length > 0) {
+                mixer = new THREE.AnimationMixer(model);
+                const action = mixer.clipAction(gltf.animations[0]);
+                action.play();
+            }
         });
 
-        // --- 移動管理 ---
+        // --- 入力と物理 ---
         const keys = {};
         let velocityY = 0;
         const gravity = -0.01;
-        const jumpForce = 0.2;
         const moveSpeed = 0.15;
+        const clock = new THREE.Clock();
 
         window.addEventListener('keydown', (e) => keys[e.code] = true);
         window.addEventListener('keyup', (e) => keys[e.code] = false);
 
         function animate() {
             requestAnimationFrame(animate);
+            const delta = clock.getDelta();
+            if (mixer) mixer.update(delta);
 
             if (controls.isLocked) {
-                // 1. 重力と接地
+                // 1. 重力
                 velocityY += gravity;
                 playerGroup.position.y += velocityY;
-
                 if (playerGroup.position.y < 0) {
                     playerGroup.position.y = 0;
                     velocityY = 0;
                 }
 
                 // 2. 移動 (WASD)
-                // PointerLockControlsのmoveForwardは、対象の向きに合わせて動かしてくれる
-                if (keys['KeyW']) controls.moveForward(moveSpeed);
-                if (keys['KeyS']) controls.moveForward(-moveSpeed);
-                if (keys['KeyA']) controls.moveRight(-moveSpeed);
-                if (keys['KeyD']) controls.moveRight(moveSpeed);
+                // cameraの向きに基づいて移動ベクトルを計算
+                const moveVector = new THREE.Vector3();
+                if (keys['KeyW']) moveVector.z -= 1;
+                if (keys['KeyS']) moveVector.z += 1;
+                if (keys['KeyA']) moveVector.x -= 1;
+                if (keys['KeyD']) moveVector.x += 1;
+
+                if (moveVector.length() > 0) {
+                    moveVector.normalize();
+                    // カメラの水平方向の向きを取得
+                    const angle = Math.atan2(camera.position.x - playerGroup.position.x, camera.position.z - playerGroup.position.z);
+                    
+                    // WASDの入力方向に合わせて移動
+                    playerGroup.translateOnAxis(moveVector.applyQuaternion(new THREE.Quaternion().setFromEuler(new THREE.Euler(0, camera.rotation.y, 0))), moveSpeed);
+                }
 
                 // 3. ジャンプ
                 if (keys['Space'] && playerGroup.position.y <= 0.01) {
-                    velocityY = jumpForce;
+                    velocityY = 0.2;
                 }
+
+                // 4. 【最重要】カメラとモデルの分離制御
+                // カメラの水平回転(Y軸)だけをモデルに反映（のけぞり防止）
+                modelContainer.rotation.y = camera.rotation.y;
+
+                // カメラをプレイヤーの位置に追従させつつ、後ろにオフセット
+                const cameraOffset = new THREE.Vector3(0, 1.5, 4).applyQuaternion(camera.quaternion);
+                camera.position.copy(playerGroup.position).add(cameraOffset);
             }
 
             renderer.render(scene, camera);
