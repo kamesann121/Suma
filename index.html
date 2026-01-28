@@ -5,20 +5,32 @@
     <title>新しいタブ</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; }
-        #crosshair { position: absolute; top: 50%; left: 50%; width: 12px; height: 12px; border: 2px solid white; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none; z-index: 10; }
-        #ui { position: absolute; bottom: 20px; left: 20px; color: white; font-family: sans-serif; background: rgba(0,0,0,0.5); padding: 15px; border-radius: 8px; }
+        #crosshair { 
+            position: absolute; top: 50%; left: 50%; 
+            width: 12px; height: 12px; border: 2px solid white; 
+            border-radius: 50%; transform: translate(-50%, -50%); 
+            pointer-events: none; z-index: 10;
+        }
+        #ui {
+            position: absolute; bottom: 20px; left: 20px;
+            color: white; font-family: sans-serif; background: rgba(0,0,0,0.5); padding: 15px;
+            border-radius: 8px; line-height: 1.6;
+        }
     </style>
 </head>
 <body>
     <div id="crosshair"></div>
-    <div id="ui">E:前 / S:後 / Q:左 / C:右 / Space:ジャンプ</div>
+    <div id="ui">
+        <b>DEBUG MODE</b><br>
+        F12キーでコンソールを開いてアニメーション名を確認してください。<br>
+        E/S/Q/C: 移動 / Space: ジャンプ
+    </div>
 
     <script type="importmap">
     {
         "imports": {
             "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-            "three/examples/jsm/": "https://unpkg.com/three@0.160.0/examples/jsm/",
-            "fflate": "https://unpkg.com/fflate@0.8.0/lib/browser.module.js"
+            "three/examples/jsm/": "https://unpkg.com/three@0.160.0/examples/jsm/"
         }
     }
     </script>
@@ -26,7 +38,6 @@
     <script type="module">
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-        import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0x87CEEB);
@@ -49,10 +60,9 @@
         const modelContainer = new THREE.Group(); 
         playerGroup.add(modelContainer);
 
-        let mixer, walkAction, playerModel;
+        let playerModel, mixer, walkAction;
         const clock = new THREE.Clock();
 
-        // 1. GLB（本体）読み込み
         const gltfLoader = new GLTFLoader();
         gltfLoader.load('./fsb.glb', (gltf) => {
             playerModel = gltf.scene;
@@ -62,25 +72,24 @@
 
             mixer = new THREE.AnimationMixer(playerModel);
 
-            // 2. FBX（動き）読み込み
-            const fbxLoader = new FBXLoader();
-            fbxLoader.load('./walk.fbx', (fbx) => {
-                const clip = fbx.animations[0];
-
-                // 【修正：ボーン名の書き換え】
-                // Mixamoの "mixamorig:Hips" などの接頭辞を消して、本体のボーン名に合わせる
-                clip.tracks.forEach(track => {
-                    track.name = track.name.replace('mixamorig:', '');
+            // --- アニメーション発掘処理 ---
+            if (gltf.animations.length > 0) {
+                console.log("🔥 アニメーションを発見しました！件数:", gltf.animations.length);
+                gltf.animations.forEach((clip, index) => {
+                    console.log(`[${index}] アニメーション名: ${clip.name}`);
                 });
 
-                walkAction = mixer.clipAction(clip);
-                console.log("モーション修正完了。再生準備OK");
-            });
+                // とりあえず1番目のモーションをセットして再生しっぱなしにする
+                walkAction = mixer.clipAction(gltf.animations[0]);
+                walkAction.play();
+            } else {
+                console.error("❌ この.glbファイルにはアニメーションが含まれていません。");
+            }
         });
 
-        // 視点・移動
         let cameraYaw = 0, cameraPitch = 0, modelYaw = 0;
         let velocityY = 0;
+        const gravity = -0.012;
         const keys = {};
 
         document.addEventListener('click', () => document.body.requestPointerLock());
@@ -97,24 +106,13 @@
         function animate() {
             requestAnimationFrame(animate);
             const delta = clock.getDelta();
-            if (mixer) mixer.update(delta);
+            if (mixer) mixer.update(delta); // これがアニメーションを動かす心臓
 
             if (document.pointerLockElement === document.body) {
                 const isMoving = keys['KeyE'] || keys['KeyS'] || keys['KeyQ'] || keys['KeyC'];
-                
-                // アニメーション再生
-                if (walkAction) {
-                    if (isMoving) {
-                        if (!walkAction.isRunning()) {
-                            walkAction.reset().play();
-                        }
-                    } else {
-                        walkAction.stop();
-                    }
-                }
-
-                // 移動 (E, S, Q, C)
                 const moveSpeed = 0.15;
+
+                // 移動処理
                 if (keys['KeyE']) {
                     playerGroup.position.x -= Math.sin(cameraYaw) * moveSpeed;
                     playerGroup.position.z -= Math.cos(cameraYaw) * moveSpeed;
@@ -132,20 +130,34 @@
                     playerGroup.position.z -= Math.sin(cameraYaw) * moveSpeed;
                 }
 
+                // ジャンプ
+                velocityY += gravity;
+                playerGroup.position.y += velocityY;
+                if (playerGroup.position.y < 0) {
+                    playerGroup.position.y = 0;
+                    velocityY = 0;
+                }
+                if (keys['Space'] && playerGroup.position.y <= 0.01) {
+                    velocityY = 0.25;
+                }
+
                 // 視点追従
                 let diff = cameraYaw - modelYaw;
                 while (diff < -Math.PI) diff += Math.PI * 2;
                 while (diff > Math.PI) diff -= Math.PI * 2;
+                const threshold = Math.PI / 2.5; 
                 if (isMoving) {
                     modelYaw += diff * 0.15;
-                } else if (Math.abs(diff) > Math.PI/2.5) {
-                    modelYaw += Math.sign(diff) * (Math.abs(diff) - Math.PI/2.5) * 0.1;
+                } else if (Math.abs(diff) > threshold) {
+                    modelYaw += Math.sign(diff) * (Math.abs(diff) - threshold) * 0.1;
                 }
                 modelContainer.rotation.y = modelYaw;
             }
 
-            // カメラ更新
-            const offset = new THREE.Vector3(0, 2, 4.5).applyQuaternion(new THREE.Quaternion().setFromEuler(new THREE.Euler(cameraPitch, cameraYaw, 0, 'YXZ')));
+            // カメラ位置更新
+            const offset = new THREE.Vector3(0, 2, 4.5);
+            const quat = new THREE.Quaternion().setFromEuler(new THREE.Euler(cameraPitch, cameraYaw, 0, 'YXZ'));
+            offset.applyQuaternion(quat);
             camera.position.copy(playerGroup.position).add(offset);
             camera.lookAt(playerGroup.position.clone().add(new THREE.Vector3(0, 1.5, 0)));
 
