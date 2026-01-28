@@ -46,7 +46,7 @@
         const loader = new FBXLoader();
         
         // ここをダウンロードしたFBXのファイル名に書き換えてください
-        loader.load('YBot.fbx', (object) => {
+        loader.load('fsb.fbx', (object) => {
             model = object;
             // Mixamoのモデルは大きいので調整
             model.scale.set(0.01, 0.01, 0.01); 
