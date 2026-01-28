@@ -7,25 +7,14 @@
         body { margin: 0; overflow: hidden; background-color: #000; }
         #crosshair { 
             position: absolute; top: 50%; left: 50%; 
-            width: 12px; height: 12px; border: 2px solid rgba(255,255,255,0.7); 
+            width: 12px; height: 12px; border: 2px solid white; 
             border-radius: 50%; transform: translate(-50%, -50%); 
-            pointer-events: none; z-index: 10;
-        }
-        #instructions {
-            position: absolute; top: 50%; left: 50%;
-            transform: translate(-50%, -50%);
-            color: white; font-family: sans-serif; text-align: center;
-            background: rgba(0,0,0,0.7); padding: 20px; cursor: pointer; border-radius: 10px;
+            pointer-events: none;
         }
     </style>
 </head>
 <body>
     <div id="crosshair"></div>
-    <div id="instructions">
-        <h2>TPS MODE</h2>
-        <p>クリックしてスタート<br>(左右の視点回転を180度に制限)</p>
-    </div>
-
     <script type="importmap">
     {
         "imports": {
@@ -39,7 +28,7 @@
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
-        // --- 基本設定 ---
+        // --- シーン設定 ---
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0x87CEEB);
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
@@ -56,82 +45,76 @@
         floor.rotation.x = -Math.PI / 2;
         scene.add(floor);
 
-        // --- プレイヤーとカメラの管理用変数 ---
+        // --- プレイヤー構造 ---
         const playerGroup = new THREE.Group();
         scene.add(playerGroup);
+
+        const modelContainer = new THREE.Group(); // モデルだけを回転させる用
+        playerGroup.add(modelContainer);
 
         let playerModel;
         const loader = new GLTFLoader();
         loader.load('./fsb.glb', (gltf) => {
             playerModel = gltf.scene;
             playerModel.scale.set(1.5, 1.5, 1.5);
-            // モデルが正面（0,0,1）を向くように調整（もし背中を向けたければここを調整）
-            playerGroup.add(playerModel);
+            // 初期状態でモデルを正面に向ける
+            modelContainer.add(playerModel);
         });
 
-        // 視点回転用変数
-        let yaw = 0;   // 左右
-        let pitch = 0; // 上下
-        const minYaw = -Math.PI / 2; // -90度
-        const maxYaw = Math.PI / 2;  // +90度 (合計180度制限)
-        const minPitch = -Math.PI / 4; // 下向き制限
-        const maxPitch = Math.PI / 4;  // 上向き制限
+        // 視点管理
+        let cameraYaw = 0;   // カメラの左右回転
+        let cameraPitch = 0; // カメラの上下回転
+        let modelYaw = 0;    // モデルの向き
 
-        // --- マウス操作 (Pointer Lock) ---
-        let isLocked = false;
-        document.addEventListener('click', () => {
-            document.body.requestPointerLock();
-        });
-        document.addEventListener('pointerlockchange', () => {
-            isLocked = document.pointerLockElement === document.body;
-            document.getElementById('instructions').style.display = isLocked ? 'none' : 'block';
-        });
-
+        document.addEventListener('click', () => document.body.requestPointerLock());
         document.addEventListener('mousemove', (e) => {
-            if (!isLocked) return;
-            // マウスの動きを回転に反映
-            yaw -= e.movementX * 0.002;
-            pitch -= e.movementY * 0.002;
-
-            // ★ここで「180度制限」をかける
-            yaw = Math.max(minYaw, Math.min(maxYaw, yaw));
-            // 上下も制限（のけぞり防止）
-            pitch = Math.max(minPitch, Math.min(maxPitch, pitch));
+            if (document.pointerLockElement !== document.body) return;
+            cameraYaw -= e.movementX * 0.003;
+            cameraPitch -= e.movementY * 0.003;
+            cameraPitch = Math.max(-Math.PI/3, Math.min(Math.PI/3, cameraPitch));
         });
 
-        // --- 移動管理 ---
         const keys = {};
         window.addEventListener('keydown', (e) => keys[e.code] = true);
         window.addEventListener('keyup', (e) => keys[e.code] = false);
 
-        const moveSpeed = 0.1;
-
         function animate() {
             requestAnimationFrame(animate);
 
-            // 1. モデルの回転（yawのみ適用）
-            playerGroup.rotation.y = yaw;
-
-            // 2. カメラの位置計算（常にモデルの真後ろ）
-            // キャラクターから見て「後ろに4m、上に2m」の位置を計算
-            const cameraOffset = new THREE.Vector3(0, 2, 4);
-            // yaw（左右回転）とpitch（上下回転）をカメラに適用
-            const quat = new THREE.Quaternion().setFromEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
-            cameraOffset.applyQuaternion(quat);
+            // --- 角度差によるモデル回転ロジック (フォートナイト風) ---
+            // 1. カメラとモデルの向きの差を計算
+            let diff = cameraYaw - modelYaw;
             
-            camera.position.copy(playerGroup.position).add(cameraOffset);
-            camera.lookAt(playerGroup.position.clone().add(new THREE.Vector3(0, 1, 0))); // キャラクターの腰あたりを見る
+            // 角度を -PI から PI の範囲に正規化
+            while (diff < -Math.PI) diff += Math.PI * 2;
+            while (diff > Math.PI) diff -= Math.PI * 2;
 
-            // 3. 移動 (WASD)
-            if (isLocked) {
-                if (keys['KeyW']) {
-                    playerGroup.position.x -= Math.sin(yaw) * moveSpeed;
-                    playerGroup.position.z -= Math.cos(yaw) * moveSpeed;
-                }
-                if (keys['KeyS']) {
-                    playerGroup.position.x += Math.sin(yaw) * moveSpeed;
-                    playerGroup.position.z += Math.cos(yaw) * moveSpeed;
-                }
+            // 2. 差が一定以上（約60度）なら、モデルをカメラの方向に引き寄せる
+            const threshold = Math.PI / 3; // 60度
+            if (Math.abs(diff) > threshold) {
+                const step = (Math.abs(diff) - threshold) * 0.1; // 0.1は回転の滑らかさ
+                modelYaw += Math.sign(diff) * step;
+            }
+
+            // 移動中は強制的に進行方向（カメラの向き）に合わせる
+            if (keys['KeyW'] || keys['KeyS'] || keys['KeyA'] || keys['KeyD']) {
+                modelYaw += diff * 0.1; 
+            }
+
+            modelContainer.rotation.y = modelYaw;
+
+            // --- カメラの位置計算 ---
+            const offset = new THREE.Vector3(0, 1.5, 4);
+            const quat = new THREE.Quaternion().setFromEuler(new THREE.Euler(cameraPitch, cameraYaw, 0, 'YXZ'));
+            offset.applyQuaternion(quat);
+            
+            camera.position.copy(playerGroup.position).add(offset);
+            camera.lookAt(playerGroup.position.clone().add(new THREE.Vector3(0, 1.2, 0)));
+
+            // 移動処理
+            if (keys['KeyW']) {
+                playerGroup.position.x -= Math.sin(cameraYaw) * 0.1;
+                playerGroup.position.z -= Math.cos(cameraYaw) * 0.1;
             }
 
             renderer.render(scene, camera);
