@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>新しいタブ</title>
+    <style> body { margin: 0; overflow: hidden; } </style>
+</head>
+<body>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/examples/jsm/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
+
+        // 1. シーン・カメラ・ライトの設定
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0xa0a0a0);
+        
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 5, 10);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        const light = new THREE.HemisphereLight(0xffffff, 0x444444);
+        light.position.set(0, 20, 0);
+        scene.add(light);
+
+        // 2. スマブラっぽい土台（床）
+        const floor = new THREE.Mesh(
+            new THREE.BoxGeometry(20, 1, 10),
+            new THREE.MeshStandardMaterial({ color: 0x555555 })
+        );
+        scene.add(floor);
+
+        // 3. FBXモデルの読み込み
+        let model, mixer;
+        const loader = new FBXLoader();
+        
+        // ここをダウンロードしたFBXのファイル名に書き換えてください
+        loader.load('YBot.fbx', (object) => {
+            model = object;
+            // Mixamoのモデルは大きいので調整
+            model.scale.set(0.01, 0.01, 0.01); 
+            scene.add(model);
+
+            // アニメーションがある場合
+            if (object.animations.length > 0) {
+                mixer = new THREE.AnimationMixer(object);
+                const action = mixer.clipAction(object.animations[0]);
+                action.play();
+            }
+        });
+
+        // 4. キーボード操作
+        const keys = {};
+        window.addEventListener('keydown', (e) => keys[e.code] = true);
+        window.addEventListener('keyup', (e) => keys[e.code] = false);
+
+        // 5. ループ処理（描画と更新）
+        const clock = new THREE.Clock();
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = clock.getDelta();
+
+            if (mixer) mixer.update(delta);
+
+            if (model) {
+                if (keys['ArrowRight']) model.position.x += 0.1;
+                if (keys['ArrowLeft'])  model.position.x -= 0.1;
+                if (keys['ArrowUp'])    model.position.z -= 0.1;
+                if (keys['ArrowDown'])  model.position.z += 0.1;
+            }
+
+            renderer.render(scene, camera);
+        }
+        animate();
+    </script>
+</body>
+</html>
