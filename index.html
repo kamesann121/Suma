@@ -5,17 +5,8 @@
     <title>新しいタブ</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; }
-        #crosshair { 
-            position: absolute; top: 50%; left: 50%; 
-            width: 12px; height: 12px; border: 2px solid white; 
-            border-radius: 50%; transform: translate(-50%, -50%); 
-            pointer-events: none; z-index: 10;
-        }
-        #ui {
-            position: absolute; bottom: 20px; left: 20px;
-            color: white; font-family: sans-serif; background: rgba(0,0,0,0.5); padding: 15px;
-            border-radius: 8px; pointer-events: none;
-        }
+        #crosshair { position: absolute; top: 50%; left: 50%; width: 12px; height: 12px; border: 2px solid white; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none; z-index: 10; }
+        #ui { position: absolute; bottom: 20px; left: 20px; color: white; font-family: sans-serif; background: rgba(0,0,0,0.5); padding: 15px; border-radius: 8px; }
     </style>
 </head>
 <body>
@@ -37,7 +28,6 @@
         import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
         import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 
-        // --- 基本設定 ---
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0x87CEEB);
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
@@ -54,42 +44,43 @@
         floor.rotation.x = -Math.PI / 2;
         scene.add(floor);
 
-        // --- プレイヤー構造 ---
         const playerGroup = new THREE.Group();
         scene.add(playerGroup);
         const modelContainer = new THREE.Group(); 
         playerGroup.add(modelContainer);
 
-        let mixer, walkAction;
+        let mixer, walkAction, playerModel;
         const clock = new THREE.Clock();
 
-        // 1. GLBモデル（本体）の読み込み
+        // 1. GLB（本体）読み込み
         const gltfLoader = new GLTFLoader();
         gltfLoader.load('./fsb.glb', (gltf) => {
-            const playerModel = gltf.scene;
+            playerModel = gltf.scene;
             playerModel.scale.set(1.5, 1.5, 1.5);
             playerModel.rotation.y = Math.PI; 
             modelContainer.add(playerModel);
 
-            // アニメーションミキサー作成
             mixer = new THREE.AnimationMixer(playerModel);
 
-            // 2. FBXモーション（動き）の読み込み
+            // 2. FBX（動き）読み込み
             const fbxLoader = new FBXLoader();
             fbxLoader.load('./walk.fbx', (fbx) => {
-                if (fbx.animations.length > 0) {
-                    // FBXのアニメーションをGLBモデルに適用
-                    const clip = fbx.animations[0];
-                    walkAction = mixer.clipAction(clip);
-                    console.log("Walk animation loaded and retargeted.");
-                }
+                const clip = fbx.animations[0];
+
+                // 【修正：ボーン名の書き換え】
+                // Mixamoの "mixamorig:Hips" などの接頭辞を消して、本体のボーン名に合わせる
+                clip.tracks.forEach(track => {
+                    track.name = track.name.replace('mixamorig:', '');
+                });
+
+                walkAction = mixer.clipAction(clip);
+                console.log("モーション修正完了。再生準備OK");
             });
         });
 
-        // 視点・移動管理
+        // 視点・移動
         let cameraYaw = 0, cameraPitch = 0, modelYaw = 0;
         let velocityY = 0;
-        const gravity = -0.012;
         const keys = {};
 
         document.addEventListener('click', () => document.body.requestPointerLock());
@@ -110,20 +101,20 @@
 
             if (document.pointerLockElement === document.body) {
                 const isMoving = keys['KeyE'] || keys['KeyS'] || keys['KeyQ'] || keys['KeyC'];
-                const moveSpeed = 0.15;
-
-                // --- アニメーション再生制御 ---
+                
+                // アニメーション再生
                 if (walkAction) {
                     if (isMoving) {
-                        if (!walkAction.isRunning()) walkAction.play();
+                        if (!walkAction.isRunning()) {
+                            walkAction.reset().play();
+                        }
                     } else {
-                        // 立ち止まったら徐々に停止（フェードアウト）
-                        walkAction.fadeOut(0.2);
-                        setTimeout(() => { if(!isMoving) walkAction.stop(); }, 200);
+                        walkAction.stop();
                     }
                 }
 
-                // 移動処理 (E, S, Q, C)
+                // 移動 (E, S, Q, C)
+                const moveSpeed = 0.15;
                 if (keys['KeyE']) {
                     playerGroup.position.x -= Math.sin(cameraYaw) * moveSpeed;
                     playerGroup.position.z -= Math.cos(cameraYaw) * moveSpeed;
@@ -141,46 +132,26 @@
                     playerGroup.position.z -= Math.sin(cameraYaw) * moveSpeed;
                 }
 
-                // ジャンプ処理
-                velocityY += gravity;
-                playerGroup.position.y += velocityY;
-                if (playerGroup.position.y < 0) {
-                    playerGroup.position.y = 0;
-                    velocityY = 0;
-                }
-                if (keys['Space'] && playerGroup.position.y <= 0.01) {
-                    velocityY = 0.25;
-                }
-
-                // 視点追従（デッドゾーンあり）
+                // 視点追従
                 let diff = cameraYaw - modelYaw;
                 while (diff < -Math.PI) diff += Math.PI * 2;
                 while (diff > Math.PI) diff -= Math.PI * 2;
-                const threshold = Math.PI / 2.5; 
                 if (isMoving) {
                     modelYaw += diff * 0.15;
-                } else if (Math.abs(diff) > threshold) {
-                    modelYaw += Math.sign(diff) * (Math.abs(diff) - threshold) * 0.1;
+                } else if (Math.abs(diff) > Math.PI/2.5) {
+                    modelYaw += Math.sign(diff) * (Math.abs(diff) - Math.PI/2.5) * 0.1;
                 }
                 modelContainer.rotation.y = modelYaw;
             }
 
-            // カメラ位置更新
-            const offset = new THREE.Vector3(0, 2, 4.5);
-            const quat = new THREE.Quaternion().setFromEuler(new THREE.Euler(cameraPitch, cameraYaw, 0, 'YXZ'));
-            offset.applyQuaternion(quat);
+            // カメラ更新
+            const offset = new THREE.Vector3(0, 2, 4.5).applyQuaternion(new THREE.Quaternion().setFromEuler(new THREE.Euler(cameraPitch, cameraYaw, 0, 'YXZ')));
             camera.position.copy(playerGroup.position).add(offset);
             camera.lookAt(playerGroup.position.clone().add(new THREE.Vector3(0, 1.5, 0)));
 
             renderer.render(scene, camera);
         }
         animate();
-
-        window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        });
     </script>
 </body>
 </html>
