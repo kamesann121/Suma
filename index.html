@@ -11,10 +11,16 @@
             border-radius: 50%; transform: translate(-50%, -50%); 
             pointer-events: none; z-index: 10;
         }
+        #ui {
+            position: absolute; bottom: 20px; left: 20px;
+            color: white; font-family: sans-serif; background: rgba(0,0,0,0.5); padding: 15px;
+            border-radius: 8px; pointer-events: none;
+        }
     </style>
 </head>
 <body>
     <div id="crosshair"></div>
+    <div id="ui">E:前 / S:後 / Q:左 / C:右 / Space:ジャンプ</div>
 
     <script type="importmap">
     {
@@ -30,48 +36,56 @@
         import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
         const scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x050510); // 夜っぽく暗めに
+        scene.background = new THREE.Color(0x050510);
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
         document.body.appendChild(renderer.domElement);
 
-        // ライト設定
-        scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+        scene.add(new THREE.AmbientLight(0xffffff, 0.6));
         const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
         dirLight.position.set(5, 10, 7);
         scene.add(dirLight);
 
-        // 地面
-        const floor = new THREE.Mesh(new THREE.PlaneGeometry(500, 500), new THREE.MeshStandardMaterial({ color: 0x111111 }));
+        const floor = new THREE.Mesh(new THREE.PlaneGeometry(500, 500), new THREE.MeshStandardMaterial({ color: 0x222222 }));
         floor.rotation.x = -Math.PI / 2;
         scene.add(floor);
 
-        // プレイヤー構造
         const playerGroup = new THREE.Group();
         scene.add(playerGroup);
         const modelContainer = new THREE.Group(); 
         playerGroup.add(modelContainer);
 
-        let mixer, walkAction;
+        let mixer, idleAction, walkAction, currentAction;
         const clock = new THREE.Clock();
 
-        // --- night.glb の読み込み ---
         const gltfLoader = new GLTFLoader();
         gltfLoader.load('./night.glb', (gltf) => {
             const playerModel = gltf.scene;
             playerModel.scale.set(1.5, 1.5, 1.5);
-            playerModel.rotation.y = Math.PI; // 背中を向ける
+            playerModel.rotation.y = Math.PI; 
             modelContainer.add(playerModel);
 
-            // アニメーション設定
             if (gltf.animations.length > 0) {
                 mixer = new THREE.AnimationMixer(playerModel);
-                // 最初のアニメーション（通常はIdleかWalk）を強制再生
-                walkAction = mixer.clipAction(gltf.animations[0]);
-                walkAction.play();
+                
+                // --- 【ここをチェック！】アニメーションの割り当て ---
+                // もし動きが逆（歩くときに待機）なら、[0] と [1] を入れ替えてください
+                idleAction = mixer.clipAction(gltf.animations[0]); 
+                walkAction = gltf.animations.length > 1 ? mixer.clipAction(gltf.animations[1]) : idleAction;
+
+                currentAction = idleAction;
+                currentAction.play();
             }
         });
+
+        // モーションを滑らかに繋ぐ関数
+        function fadeTo(nextAction) {
+            if (!nextAction || currentAction === nextAction) return;
+            nextAction.reset().fadeIn(0.2).play();
+            currentAction.fadeOut(0.2);
+            currentAction = nextAction;
+        }
 
         let cameraYaw = 0, cameraPitch = 0, modelYaw = 0;
         let velocityY = 0;
@@ -92,13 +106,20 @@
         function animate() {
             requestAnimationFrame(animate);
             const delta = clock.getDelta();
-            if (mixer) mixer.update(delta); // アニメーション更新
+            if (mixer) mixer.update(delta);
 
             if (document.pointerLockElement === document.body) {
                 const isMoving = keys['KeyE'] || keys['KeyS'] || keys['KeyQ'] || keys['KeyC'];
                 const moveSpeed = 0.15;
 
-                // --- 移動処理 (E, S, Q, C) ---
+                // --- モーション切り替え ---
+                if (isMoving) {
+                    fadeTo(walkAction);
+                } else {
+                    fadeTo(idleAction);
+                }
+
+                // 移動
                 if (keys['KeyE']) {
                     playerGroup.position.x -= Math.sin(cameraYaw) * moveSpeed;
                     playerGroup.position.z -= Math.cos(cameraYaw) * moveSpeed;
@@ -114,16 +135,6 @@
                 if (keys['KeyC']) {
                     playerGroup.position.x += Math.cos(cameraYaw) * moveSpeed;
                     playerGroup.position.z -= Math.sin(cameraYaw) * moveSpeed;
-                }
-
-                // --- アニメーションのON/OFF（移動中だけ動かす場合） ---
-                if (walkAction) {
-                    if (isMoving) {
-                        walkAction.paused = false;
-                    } else {
-                        // 止まっている時はアニメーションを一時停止（またはスローに）
-                        walkAction.paused = true;
-                    }
                 }
 
                 // ジャンプ
@@ -149,7 +160,6 @@
                 modelContainer.rotation.y = modelYaw;
             }
 
-            // カメラ更新
             const offset = new THREE.Vector3(0, 2, 4.5);
             const quat = new THREE.Quaternion().setFromEuler(new THREE.Euler(cameraPitch, cameraYaw, 0, 'YXZ'));
             offset.applyQuaternion(quat);
