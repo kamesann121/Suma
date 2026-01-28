@@ -11,10 +11,16 @@
             border-radius: 50%; transform: translate(-50%, -50%); 
             pointer-events: none;
         }
+        #ui {
+            position: absolute; bottom: 20px; left: 20px;
+            color: white; font-family: sans-serif; background: rgba(0,0,0,0.5); padding: 10px;
+        }
     </style>
 </head>
 <body>
     <div id="crosshair"></div>
+    <div id="ui">E:前 / S:後 / Q:左 / C:右 / Space:ジャンプ</div>
+
     <script type="importmap">
     {
         "imports": {
@@ -44,10 +50,8 @@
         floor.rotation.x = -Math.PI / 2;
         scene.add(floor);
 
-        // --- プレイヤー構造 ---
         const playerGroup = new THREE.Group();
         scene.add(playerGroup);
-
         const modelContainer = new THREE.Group(); 
         playerGroup.add(modelContainer);
 
@@ -56,17 +60,13 @@
         loader.load('./fsb.glb', (gltf) => {
             playerModel = gltf.scene;
             playerModel.scale.set(1.5, 1.5, 1.5);
-            
-            // 【修正ポイント】前後逆なので、読み込み時にモデル自体を180度回転させる
-            playerModel.rotation.y = Math.PI; 
-            
+            playerModel.rotation.y = Math.PI; // 前後逆を修正
             modelContainer.add(playerModel);
         });
 
-        // 視点管理
-        let cameraYaw = 0;   
-        let cameraPitch = 0; 
-        let modelYaw = 0;    
+        let cameraYaw = 0, cameraPitch = 0, modelYaw = 0;
+        let velocityY = 0;
+        const gravity = -0.01;
 
         document.addEventListener('click', () => document.body.requestPointerLock());
         document.addEventListener('mousemove', (e) => {
@@ -83,46 +83,59 @@
         function animate() {
             requestAnimationFrame(animate);
 
-            // --- フォートナイト風：角度差による回転ロジック ---
+            // --- キー操作判定 (E, S, Q, C) ---
+            const isMoving = keys['KeyE'] || keys['KeyS'] || keys['KeyQ'] || keys['KeyC'];
+            const moveSpeed = 0.12;
+
+            if (document.pointerLockElement === document.body) {
+                if (keys['KeyE']) { // 前
+                    playerGroup.position.x -= Math.sin(cameraYaw) * moveSpeed;
+                    playerGroup.position.z -= Math.cos(cameraYaw) * moveSpeed;
+                }
+                if (keys['KeyS']) { // 後
+                    playerGroup.position.x += Math.sin(cameraYaw) * moveSpeed;
+                    playerGroup.position.z += Math.cos(cameraYaw) * moveSpeed;
+                }
+                if (keys['KeyQ']) { // 左
+                    playerGroup.position.x -= Math.cos(cameraYaw) * moveSpeed;
+                    playerGroup.position.z += Math.sin(cameraYaw) * moveSpeed;
+                }
+                if (keys['KeyC']) { // 右
+                    playerGroup.position.x += Math.cos(cameraYaw) * moveSpeed;
+                    playerGroup.position.z -= Math.sin(cameraYaw) * moveSpeed;
+                }
+
+                // ジャンプ
+                velocityY += gravity;
+                playerGroup.position.y += velocityY;
+                if (playerGroup.position.y < 0) {
+                    playerGroup.position.y = 0;
+                    velocityY = 0;
+                }
+                if (keys['Space'] && playerGroup.position.y <= 0.01) {
+                    velocityY = 0.2;
+                }
+            }
+
+            // --- 視点追従ロジック ---
             let diff = cameraYaw - modelYaw;
-            
-            // 角度を正規化
             while (diff < -Math.PI) diff += Math.PI * 2;
             while (diff > Math.PI) diff -= Math.PI * 2;
 
-            // 遊び（デッドゾーン）の設定。これを超えると体が動く
-            const threshold = Math.PI / 2.5; // 約72度
-            
-            // 移動中か、角度差が限界を超えたら回転
-            if (keys['KeyW'] || keys['KeyS'] || keys['KeyA'] || keys['KeyD']) {
-                // 移動中は素早くカメラの向きに合わせる
-                modelYaw += diff * 0.15; 
+            const threshold = Math.PI / 2.5; 
+            if (isMoving) {
+                modelYaw += diff * 0.15; // 移動中はカメラに向く
             } else if (Math.abs(diff) > threshold) {
-                // 立ち止まっている時は、限界を超えた分だけゆっくり体がついてくる
-                const step = (Math.abs(diff) - threshold) * 0.1;
-                modelYaw += Math.sign(diff) * step;
+                modelYaw += Math.sign(diff) * (Math.abs(diff) - threshold) * 0.1; // 遊びを超えたら追従
             }
-
             modelContainer.rotation.y = modelYaw;
 
-            // --- カメラの位置計算 ---
-            const offset = new THREE.Vector3(0, 1.8, 4); // 高さ1.8m、後ろに4m
+            // --- カメラ位置計算 ---
+            const offset = new THREE.Vector3(0, 1.8, 4.5);
             const quat = new THREE.Quaternion().setFromEuler(new THREE.Euler(cameraPitch, cameraYaw, 0, 'YXZ'));
             offset.applyQuaternion(quat);
-            
             camera.position.copy(playerGroup.position).add(offset);
             camera.lookAt(playerGroup.position.clone().add(new THREE.Vector3(0, 1.5, 0)));
-
-            // 移動処理
-            const moveSpeed = 0.1;
-            if (keys['KeyW']) {
-                playerGroup.position.x -= Math.sin(cameraYaw) * moveSpeed;
-                playerGroup.position.z -= Math.cos(cameraYaw) * moveSpeed;
-            }
-            if (keys['KeyS']) {
-                playerGroup.position.x += Math.sin(cameraYaw) * moveSpeed;
-                playerGroup.position.z += Math.cos(cameraYaw) * moveSpeed;
-            }
 
             renderer.render(scene, camera);
         }
