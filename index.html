@@ -28,7 +28,6 @@
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
-        // --- シーン設定 ---
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0x87CEEB);
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
@@ -49,7 +48,7 @@
         const playerGroup = new THREE.Group();
         scene.add(playerGroup);
 
-        const modelContainer = new THREE.Group(); // モデルだけを回転させる用
+        const modelContainer = new THREE.Group(); 
         playerGroup.add(modelContainer);
 
         let playerModel;
@@ -57,14 +56,17 @@
         loader.load('./fsb.glb', (gltf) => {
             playerModel = gltf.scene;
             playerModel.scale.set(1.5, 1.5, 1.5);
-            // 初期状態でモデルを正面に向ける
+            
+            // 【修正ポイント】前後逆なので、読み込み時にモデル自体を180度回転させる
+            playerModel.rotation.y = Math.PI; 
+            
             modelContainer.add(playerModel);
         });
 
         // 視点管理
-        let cameraYaw = 0;   // カメラの左右回転
-        let cameraPitch = 0; // カメラの上下回転
-        let modelYaw = 0;    // モデルの向き
+        let cameraYaw = 0;   
+        let cameraPitch = 0; 
+        let modelYaw = 0;    
 
         document.addEventListener('click', () => document.body.requestPointerLock());
         document.addEventListener('mousemove', (e) => {
@@ -81,40 +83,45 @@
         function animate() {
             requestAnimationFrame(animate);
 
-            // --- 角度差によるモデル回転ロジック (フォートナイト風) ---
-            // 1. カメラとモデルの向きの差を計算
+            // --- フォートナイト風：角度差による回転ロジック ---
             let diff = cameraYaw - modelYaw;
             
-            // 角度を -PI から PI の範囲に正規化
+            // 角度を正規化
             while (diff < -Math.PI) diff += Math.PI * 2;
             while (diff > Math.PI) diff -= Math.PI * 2;
 
-            // 2. 差が一定以上（約60度）なら、モデルをカメラの方向に引き寄せる
-            const threshold = Math.PI / 3; // 60度
-            if (Math.abs(diff) > threshold) {
-                const step = (Math.abs(diff) - threshold) * 0.1; // 0.1は回転の滑らかさ
-                modelYaw += Math.sign(diff) * step;
-            }
-
-            // 移動中は強制的に進行方向（カメラの向き）に合わせる
+            // 遊び（デッドゾーン）の設定。これを超えると体が動く
+            const threshold = Math.PI / 2.5; // 約72度
+            
+            // 移動中か、角度差が限界を超えたら回転
             if (keys['KeyW'] || keys['KeyS'] || keys['KeyA'] || keys['KeyD']) {
-                modelYaw += diff * 0.1; 
+                // 移動中は素早くカメラの向きに合わせる
+                modelYaw += diff * 0.15; 
+            } else if (Math.abs(diff) > threshold) {
+                // 立ち止まっている時は、限界を超えた分だけゆっくり体がついてくる
+                const step = (Math.abs(diff) - threshold) * 0.1;
+                modelYaw += Math.sign(diff) * step;
             }
 
             modelContainer.rotation.y = modelYaw;
 
             // --- カメラの位置計算 ---
-            const offset = new THREE.Vector3(0, 1.5, 4);
+            const offset = new THREE.Vector3(0, 1.8, 4); // 高さ1.8m、後ろに4m
             const quat = new THREE.Quaternion().setFromEuler(new THREE.Euler(cameraPitch, cameraYaw, 0, 'YXZ'));
             offset.applyQuaternion(quat);
             
             camera.position.copy(playerGroup.position).add(offset);
-            camera.lookAt(playerGroup.position.clone().add(new THREE.Vector3(0, 1.2, 0)));
+            camera.lookAt(playerGroup.position.clone().add(new THREE.Vector3(0, 1.5, 0)));
 
             // 移動処理
+            const moveSpeed = 0.1;
             if (keys['KeyW']) {
-                playerGroup.position.x -= Math.sin(cameraYaw) * 0.1;
-                playerGroup.position.z -= Math.cos(cameraYaw) * 0.1;
+                playerGroup.position.x -= Math.sin(cameraYaw) * moveSpeed;
+                playerGroup.position.z -= Math.cos(cameraYaw) * moveSpeed;
+            }
+            if (keys['KeyS']) {
+                playerGroup.position.x += Math.sin(cameraYaw) * moveSpeed;
+                playerGroup.position.z += Math.cos(cameraYaw) * moveSpeed;
             }
 
             renderer.render(scene, camera);
