@@ -2,14 +2,29 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>新しいタブt</title>
+    <title新しいタブ</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; }
         #crosshair { position: absolute; top: 50%; left: 50%; width: 12px; height: 12px; border: 2px solid white; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none; z-index: 10; }
+        /* デバッグ表示用のスタイル */
+        #debug { 
+            position: absolute; 
+            top: 10px; 
+            left: 10px; 
+            color: #0f0; 
+            background: rgba(0,0,0,0.7); 
+            padding: 10px; 
+            font-family: monospace; 
+            font-size: 14px; 
+            z-index: 20; 
+            pointer-events: none;
+            border: 1px solid #0f0;
+        }
     </style>
 </head>
 <body>
     <div id="crosshair"></div>
+    <div id="debug">Loading animations...</div>
 
     <script type="importmap">
     {
@@ -23,8 +38,9 @@
     <script type="module">
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-        import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js'; // 圧縮解除用
+        import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 
+        const debugElement = document.getElementById('debug');
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0x87CEEB); 
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
@@ -32,7 +48,6 @@
         renderer.setSize(window.innerWidth, window.innerHeight);
         document.body.appendChild(renderer.domElement);
 
-        // ライト
         scene.add(new THREE.AmbientLight(0xffffff, 1.8)); 
         const sun = new THREE.DirectionalLight(0xffffff, 1.5);
         sun.position.set(10, 20, 10);
@@ -50,7 +65,6 @@
         let mixer, actions = {}, currentAction;
         const clock = new THREE.Clock();
 
-        // --- DracoLoaderの設定（圧縮ファイルを読み込むために必要） ---
         const dracoLoader = new DRACOLoader();
         dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
 
@@ -66,22 +80,30 @@
             if (gltf.animations.length > 0) {
                 mixer = new THREE.AnimationMixer(playerModel);
                 
-                // アニメーションを整理（名前がわからなくても0, 1, 2で管理）
-                // 一般的な順番：0=Idle, 1=Walk, 2=Run, 3=Jump（モデルにより異なる）
+                // 全てのアニメーションを登録し、名前をデバッグ用に保存
+                let infoText = "Available Animations:<br>";
                 gltf.animations.forEach((clip, index) => {
                     actions[index] = mixer.clipAction(clip);
+                    actions[index].name = clip.name; // 名前をアクションオブジェクトに保持
+                    infoText += `[${index}] ${clip.name}<br>`;
                 });
+                debugElement.innerHTML = infoText + "<hr>Current: [0]";
 
-                // 最初は「0番(Idle)」を再生
                 currentAction = actions[0];
                 if (currentAction) currentAction.play();
+            } else {
+                debugElement.innerHTML = "No animations found in this model.";
             }
         });
 
-        // スムーズなモーション切り替え関数
         function fadeTo(index) {
             const nextAction = actions[index];
             if (!nextAction || currentAction === nextAction) return;
+            
+            // 画面の「Current」表示を更新
+            const currentLine = debugElement.innerHTML.split('<hr>')[0];
+            debugElement.innerHTML = currentLine + `<hr>Current: [${index}] ${nextAction.name}`;
+            
             nextAction.reset().fadeIn(0.2).play();
             currentAction.fadeOut(0.2);
             currentAction = nextAction;
@@ -108,20 +130,21 @@
             if (mixer) mixer.update(delta);
 
             if (document.pointerLockElement === document.body) {
+                // キー判定（元のコードの E, S, Q, C を維持）
                 const isMoving = keys['KeyE'] || keys['KeyS'] || keys['KeyQ'] || keys['KeyC'];
                 const onGround = playerGroup.position.y <= 0.01;
                 const moveSpeed = 0.15;
 
-                // --- モーション自動判定 ---
+                // --- アニメーション切り替え ---
+                // ここの数字(0, 1, 3)がモデルと合っていない可能性が高いです
                 if (!onGround) {
-                    fadeTo(3); // 空中にいればジャンプ（3番と想定）
+                    fadeTo(3); 
                 } else if (isMoving) {
-                    fadeTo(1); // 動いていれば歩き（1番と想定）
+                    fadeTo(1); 
                 } else {
-                    fadeTo(0); // 止まっていれば待機（0番と想定）
+                    fadeTo(0); 
                 }
 
-                // 移動
                 if (keys['KeyE']) {
                     playerGroup.position.x -= Math.sin(cameraYaw) * moveSpeed;
                     playerGroup.position.z -= Math.cos(cameraYaw) * moveSpeed;
@@ -144,7 +167,6 @@
                 if (playerGroup.position.y < 0) { playerGroup.position.y = 0; velocityY = 0; }
                 if (keys['Space'] && onGround) velocityY = 0.25;
 
-                // 視点追従
                 let diff = cameraYaw - modelYaw;
                 while (diff < -Math.PI) diff += Math.PI * 2;
                 while (diff > Math.PI) diff -= Math.PI * 2;
