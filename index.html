@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>新しいタブ</title>
+    <title>3D Character Test</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; }
         #crosshair { position: absolute; top: 50%; left: 50%; width: 12px; height: 12px; border: 2px solid white; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none; z-index: 10; }
@@ -11,7 +11,7 @@
 </head>
 <body>
     <div id="crosshair"></div>
-    <div id="debug">Loading GLB files...</div>
+    <div id="debug">Loading combined model...</div>
 
     <script type="importmap">
     {
@@ -58,8 +58,8 @@
         const gltfLoader = new GLTFLoader();
         gltfLoader.setDRACOLoader(dracoLoader);
 
-        // 1. メインモデル(night.glb)をロード
-        gltfLoader.load('./night.glb', (gltf) => {
+        // ★★★ ここで統合したファイルを読み込む ★★★
+        gltfLoader.load('./combined.glb', (gltf) => {
             const playerModel = gltf.scene;
             playerModel.scale.set(1.5, 1.5, 1.5);
             playerModel.rotation.y = Math.PI; 
@@ -67,38 +67,25 @@
 
             mixer = new THREE.AnimationMixer(playerModel);
             
-            // GLB内のアニメーションを 'walk' として登録
-            if (gltf.animations.length > 0) {
-                actions['walk'] = mixer.clipAction(gltf.animations[0]);
-            }
-
-            // 2. 変換した待機モーション(idle.glb)をロード
-            gltfLoader.load('./idle.glb', (idleGltf) => {
-                if (idleGltf.animations.length > 0) {
-                    // ここで idle.glb のモーションをメインモデルの mixer に繋ぐ
-                    actions['idle'] = mixer.clipAction(idleGltf.animations[0]);
-                    
-                    // 最初は待機状態
-                    currentAction = actions['idle'];
-                    currentAction.play();
-                    debugElement.innerHTML = "Success: Both GLBs ready.<br>Current: [idle]";
-                } else {
-                    debugElement.innerHTML = "idle.glb loaded but NO animation found.";
-                }
-            }, undefined, (err) => {
-                debugElement.innerHTML = "Error loading idle.glb: Check filename.";
+            // 全アニメーションを表示して確認しやすくする
+            let infoText = "Animations found:<br>";
+            gltf.animations.forEach((clip, index) => {
+                actions[index] = mixer.clipAction(clip);
+                infoText += `[${index}] ${clip.name}<br>`;
             });
+            debugElement.innerHTML = infoText + "<hr>Check index for Idle/Walk";
+
+            // ★ 読み込んだ順番に合わせて再生（まずは0番を仮にIdleとする）
+            currentAction = actions[0];
+            if (currentAction) currentAction.play();
 
         }, undefined, (err) => {
-            debugElement.innerHTML = "Error loading night.glb: Check filename.";
+            debugElement.innerHTML = "Error loading combined.glb: Check filename.";
         });
 
-        // スムーズに切り替える関数
-        function fadeTo(name) {
-            const nextAction = actions[name];
+        function fadeTo(index) {
+            const nextAction = actions[index];
             if (!nextAction || currentAction === nextAction) return;
-            
-            debugElement.innerHTML = `Success: Both GLBs ready.<br>Current: [${name}]`;
             
             nextAction.reset().fadeIn(0.2).play();
             if (currentAction) currentAction.fadeOut(0.2);
@@ -126,21 +113,20 @@
             if (mixer) mixer.update(delta);
 
             if (document.pointerLockElement === document.body) {
-                // キー入力判定
                 const isMoving = keys['KeyE'] || keys['KeyS'] || keys['KeyQ'] || keys['KeyC'];
                 const onGround = playerGroup.position.y <= 0.01;
                 const moveSpeed = 0.15;
 
-                // --- モーション自動切り替えロジック ---
+                // --- アニメーション切り替えロジック（インデックスをリストに合わせて調整） ---
+                // 左上の表示を見て、IdleとWalkの番号が違っていたらここを書き換えてください！
                 if (onGround) {
                     if (isMoving) {
-                        fadeTo('walk'); 
+                        fadeTo(1); // 例: 1番がWalkの場合
                     } else {
-                        fadeTo('idle'); 
+                        fadeTo(0); // 例: 0番がIdleの場合
                     }
                 }
 
-                // 移動処理
                 if (keys['KeyE']) {
                     playerGroup.position.x -= Math.sin(cameraYaw) * moveSpeed;
                     playerGroup.position.z -= Math.cos(cameraYaw) * moveSpeed;
@@ -163,7 +149,6 @@
                 if (playerGroup.position.y < 0) { playerGroup.position.y = 0; velocityY = 0; }
                 if (keys['Space'] && onGround) velocityY = 0.25;
 
-                // 向きの回転処理
                 let diff = cameraYaw - modelYaw;
                 while (diff < -Math.PI) diff += Math.PI * 2;
                 while (diff > Math.PI) diff -= Math.PI * 2;
@@ -175,7 +160,6 @@
                 modelContainer.rotation.y = modelYaw;
             }
 
-            // カメラの追従
             const offset = new THREE.Vector3(0, 2.5, 5.0); 
             const quat = new THREE.Quaternion().setFromEuler(new THREE.Euler(cameraPitch, cameraYaw, 0, 'YXZ'));
             offset.applyQuaternion(quat);
