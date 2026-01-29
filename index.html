@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>新しいタブt</title>
+    <title>新しいタブ</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; }
         #crosshair { position: absolute; top: 50%; left: 50%; width: 12px; height: 12px; border: 2px solid white; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none; z-index: 10; }
@@ -14,8 +14,8 @@
     <script type="importmap">
     {
         "imports": {
-            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-            "three/examples/jsm/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            "three": "https://unpkg.com",
+            "three/examples/jsm/": "https://unpkg.com"
         }
     }
     </script>
@@ -23,7 +23,7 @@
     <script type="module">
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-        import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js'; // 圧縮解除用
+        import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0x87CEEB); 
@@ -32,7 +32,6 @@
         renderer.setSize(window.innerWidth, window.innerHeight);
         document.body.appendChild(renderer.domElement);
 
-        // ライト
         scene.add(new THREE.AmbientLight(0xffffff, 1.8)); 
         const sun = new THREE.DirectionalLight(0xffffff, 1.5);
         sun.position.set(10, 20, 10);
@@ -50,9 +49,8 @@
         let mixer, actions = {}, currentAction;
         const clock = new THREE.Clock();
 
-        // --- DracoLoaderの設定（圧縮ファイルを読み込むために必要） ---
         const dracoLoader = new DRACOLoader();
-        dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
+        dracoLoader.setDecoderPath('https://www.gstatic.com');
 
         const gltfLoader = new GLTFLoader();
         gltfLoader.setDRACOLoader(dracoLoader);
@@ -65,25 +63,19 @@
 
             if (gltf.animations.length > 0) {
                 mixer = new THREE.AnimationMixer(playerModel);
-                
-                // アニメーションを整理（名前がわからなくても0, 1, 2で管理）
-                // 一般的な順番：0=Idle, 1=Walk, 2=Run, 3=Jump（モデルにより異なる）
                 gltf.animations.forEach((clip, index) => {
                     actions[index] = mixer.clipAction(clip);
                 });
-
-                // 最初は「0番(Idle)」を再生
-                currentAction = actions[0];
+                currentAction = actions[0]; // Idle
                 if (currentAction) currentAction.play();
             }
         });
 
-        // スムーズなモーション切り替え関数
         function fadeTo(index) {
             const nextAction = actions[index];
             if (!nextAction || currentAction === nextAction) return;
             nextAction.reset().fadeIn(0.2).play();
-            currentAction.fadeOut(0.2);
+            if (currentAction) currentAction.fadeOut(0.2);
             currentAction = nextAction;
         }
 
@@ -108,21 +100,22 @@
             if (mixer) mixer.update(delta);
 
             if (document.pointerLockElement === document.body) {
-                const isMoving = keys['KeyE'] || keys['KeyS'] || keys['KeyQ'] || keys['KeyC'];
+                // WASDで判定
+                const isMoving = keys['KeyW'] || keys['KeyS'] || keys['KeyA'] || keys['KeyD'];
                 const onGround = playerGroup.position.y <= 0.01;
                 const moveSpeed = 0.15;
 
-                // --- モーション自動判定 ---
+                // モーション切り替え
                 if (!onGround) {
-                    fadeTo(3); // 空中にいればジャンプ（3番と想定）
+                    fadeTo(3); // Jump
                 } else if (isMoving) {
-                    fadeTo(1); // 動いていれば歩き（1番と想定）
+                    fadeTo(1); // Walk
                 } else {
-                    fadeTo(0); // 止まっていれば待機（0番と想定）
+                    fadeTo(0); // Idle
                 }
 
-                // 移動
-                if (keys['KeyE']) {
+                // 移動処理 (WASD)
+                if (keys['KeyW']) {
                     playerGroup.position.x -= Math.sin(cameraYaw) * moveSpeed;
                     playerGroup.position.z -= Math.cos(cameraYaw) * moveSpeed;
                 }
@@ -130,11 +123,11 @@
                     playerGroup.position.x += Math.sin(cameraYaw) * moveSpeed;
                     playerGroup.position.z += Math.cos(cameraYaw) * moveSpeed;
                 }
-                if (keys['KeyQ']) {
+                if (keys['KeyA']) {
                     playerGroup.position.x -= Math.cos(cameraYaw) * moveSpeed;
                     playerGroup.position.z += Math.sin(cameraYaw) * moveSpeed;
                 }
-                if (keys['KeyC']) {
+                if (keys['KeyD']) {
                     playerGroup.position.x += Math.cos(cameraYaw) * moveSpeed;
                     playerGroup.position.z -= Math.sin(cameraYaw) * moveSpeed;
                 }
@@ -144,14 +137,12 @@
                 if (playerGroup.position.y < 0) { playerGroup.position.y = 0; velocityY = 0; }
                 if (keys['Space'] && onGround) velocityY = 0.25;
 
-                // 視点追従
+                // モデルの向きをカメラに合わせる
                 let diff = cameraYaw - modelYaw;
                 while (diff < -Math.PI) diff += Math.PI * 2;
                 while (diff > Math.PI) diff -= Math.PI * 2;
                 if (isMoving) {
                     modelYaw += diff * 0.15;
-                } else if (Math.abs(diff) > Math.PI/2.5) {
-                    modelYaw += Math.sign(diff) * (Math.abs(diff) - Math.PI/2.5) * 0.1;
                 }
                 modelContainer.rotation.y = modelYaw;
             }
@@ -165,6 +156,12 @@
             renderer.render(scene, camera);
         }
         animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
     </script>
 </body>
 </html>
