@@ -2,21 +2,20 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>3D Mannequin Controller</title>
+    <title>新しいタブ</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; }
-        /* 左上のデバッグ表示 */
         #debug { 
             position: absolute; top: 10px; left: 10px; 
             color: #0f0; background: rgba(0,0,0,0.8); 
             padding: 10px; z-index: 20; font-family: monospace; 
             font-size: 11px; border: 1px solid #0f0; 
-            max-height: 90vh; overflow-y: auto; width: 280px; 
+            max-height: 90vh; overflow-y: auto; width: 300px; 
         }
     </style>
 </head>
 <body>
-    <div id="debug">Scanning Mannequin...</div>
+    <div id="debug">Loading KayKit Model...</div>
 
     <script type="importmap">
     {
@@ -30,22 +29,23 @@
     <script type="module">
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-        import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 
         const debugElement = document.getElementById('debug');
         const scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x222222);
+        scene.background = new THREE.Color(0x87CEEB); // 空の色
         
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
         document.body.appendChild(renderer.domElement);
 
+        // 明るい照明
         scene.add(new THREE.AmbientLight(0xffffff, 2));
         const sun = new THREE.DirectionalLight(0xffffff, 1.5);
         sun.position.set(5, 10, 5);
         scene.add(sun);
 
+        // 地面
         const grid = new THREE.GridHelper(200, 50, 0xffffff, 0x444444);
         scene.add(grid);
 
@@ -56,58 +56,49 @@
 
         let mixer, actions = {}, currentAction;
         const clock = new THREE.Clock();
-
-        const dracoLoader = new DRACOLoader();
-        dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
         const loader = new GLTFLoader();
-        loader.setDRACOLoader(dracoLoader);
 
-        // --- モデルロード ---
+        // --- KayKit モデルロード (Mannequin.glb) ---
         loader.load('./Mannequin.glb', (gltf) => {
             const model = gltf.scene;
             modelContainer.add(model);
             
-            // 1. モデル内の実際の骨の名前をすべて取得
-            let boneList = [];
-            model.traverse(n => { if(n.isBone) boneList.push(n.name); });
-            
+            // モデルの向きを正面に調整 (必要に応じて 0 や Math.PI/2 に変えて)
+            model.rotation.y = Math.PI;
+
             mixer = new THREE.AnimationMixer(model);
 
-            // 2. アニメーションの骨の名前をモデルに合わせて修正
-            gltf.animations.forEach((clip, i) => {
-                const newClip = clip.clone();
-                newClip.tracks.forEach(track => {
-                    const parts = track.name.split('.');
-                    const property = parts.pop(); 
-                    const rawBoneName = parts.join('.').split(/[:\/\._]/).pop();
-                    
-                    // 曖昧検索で骨を紐付け
-                    const targetBone = boneList.find(b => b.toLowerCase().includes(rawBoneName.toLowerCase()));
-                    if (targetBone) {
-                        track.name = targetBone + '.' + property;
-                    }
-                });
-                actions[i] = mixer.clipAction(newClip);
+            let animNames = [];
+            gltf.animations.forEach((clip) => {
+                const name = clip.name.toLowerCase();
+                animNames.push(clip.name);
+                
+                // アニメーション名で振り分け
+                const action = mixer.clipAction(clip);
+                if (name.includes('idle')) actions['idle'] = action;
+                if (name.includes('walk')) actions['walk'] = action;
             });
 
-            // 3. 待機(0番)と歩き(1番)をセット ※逆なら入れ替えて
-            actions['idle'] = actions[0];
-            actions['walk'] = actions[1] || actions[0];
+            // もし名前で見つからない場合の保険（0番と1番を使用）
+            if (!actions['idle']) actions['idle'] = mixer.clipAction(gltf.animations[0]);
+            if (!actions['walk']) actions['walk'] = mixer.clipAction(gltf.animations[1] || gltf.animations[0]);
 
+            // 待機開始
             if (actions['idle']) {
                 currentAction = actions['idle'];
                 currentAction.play();
             }
             
             debugElement.innerHTML = `
-                <b>[Mannequin Bones]</b><br>${boneList.slice(0, 5).join('<br>')}...<br>
-                <hr><b>[Animations Found]</b><br>
-                ${gltf.animations.map((c,i)=>`[${i}] ${c.name}`).join('<br>')}
-                <hr>Status: Ready!<br>Use E,S,Q,C to Move
+                <b>[KayKit Model Loaded]</b><br>
+                Anims: ${animNames.slice(0, 5).join(', ')}...<br>
+                <hr>Status: Ready!<br>Click to Start / E,S,Q,C to Move
             `;
-        }, undefined, (e) => debugElement.innerHTML = "File Not Found: Mannequin.glb");
+        }, undefined, (e) => {
+            debugElement.innerHTML = "Error loading Mannequin.glb: " + e.message;
+        });
 
-        // アニメーション切り替え
+        // モーション切り替え関数
         function fadeTo(name) {
             const next = actions[name];
             if (!next || currentAction === next) return;
@@ -116,9 +107,10 @@
             currentAction = next;
         }
 
-        // --- カメラ & 操作 ---
+        // --- 操作・カメラ設定 ---
         let cameraYaw = 0, cameraPitch = 0, modelYaw = 0;
         const keys = {};
+
         document.addEventListener('click', () => document.body.requestPointerLock());
         document.addEventListener('mousemove', (e) => {
             if (document.pointerLockElement === document.body) {
@@ -127,6 +119,7 @@
                 cameraPitch = Math.max(-Math.PI/3, Math.min(Math.PI/3, cameraPitch));
             }
         });
+
         window.addEventListener('keydown', (e) => keys[e.code] = true);
         window.addEventListener('keyup', (e) => keys[e.code] = false);
 
@@ -136,15 +129,31 @@
             if (mixer) mixer.update(delta);
 
             if (document.pointerLockElement === document.body) {
+                // Eキーで前進、Sキーで後退
                 const isMoving = keys['KeyE'] || keys['KeyS'] || keys['KeyQ'] || keys['KeyC'];
-                if (isMoving) fadeTo('walk'); else fadeTo('idle');
+                
+                if (isMoving) fadeTo('walk');
+                else fadeTo('idle');
 
                 const moveSpeed = 0.12;
-                if (keys['KeyE']) { playerGroup.position.x -= Math.sin(cameraYaw) * moveSpeed; playerGroup.position.z -= Math.cos(cameraYaw) * moveSpeed; }
-                if (keys['KeyS']) { playerGroup.position.x += Math.sin(cameraYaw) * moveSpeed; playerGroup.position.z += Math.cos(cameraYaw) * moveSpeed; }
-                if (keys['KeyQ']) { playerGroup.position.x -= Math.cos(cameraYaw) * moveSpeed; playerGroup.position.z += Math.sin(cameraYaw) * moveSpeed; }
-                if (keys['KeyC']) { playerGroup.position.x += Math.cos(cameraYaw) * moveSpeed; playerGroup.position.z -= Math.sin(cameraYaw) * moveSpeed; }
+                if (keys['KeyE']) {
+                    playerGroup.position.x -= Math.sin(cameraYaw) * moveSpeed;
+                    playerGroup.position.z -= Math.cos(cameraYaw) * moveSpeed;
+                }
+                if (keys['KeyS']) {
+                    playerGroup.position.x += Math.sin(cameraYaw) * moveSpeed;
+                    playerGroup.position.z += Math.cos(cameraYaw) * moveSpeed;
+                }
+                if (keys['KeyQ']) {
+                    playerGroup.position.x -= Math.cos(cameraYaw) * moveSpeed;
+                    playerGroup.position.z += Math.sin(cameraYaw) * moveSpeed;
+                }
+                if (keys['KeyC']) {
+                    playerGroup.position.x += Math.cos(cameraYaw) * moveSpeed;
+                    playerGroup.position.z -= Math.sin(cameraYaw) * moveSpeed;
+                }
 
+                // モデルを移動方向にじわっと向ける
                 let diff = cameraYaw - modelYaw;
                 while (diff < -Math.PI) diff += Math.PI * 2;
                 while (diff > Math.PI) diff -= Math.PI * 2;
@@ -152,14 +161,23 @@
                 modelContainer.rotation.y = modelYaw;
             }
 
+            // 三人称カメラの追従
             const offset = new THREE.Vector3(0, 1.8, 4); 
             const quat = new THREE.Quaternion().setFromEuler(new THREE.Euler(cameraPitch, cameraYaw, 0, 'YXZ'));
             offset.applyQuaternion(quat);
             camera.position.copy(playerGroup.position).add(offset);
             camera.lookAt(playerGroup.position.clone().add(new THREE.Vector3(0, 1.5, 0)));
+
             renderer.render(scene, camera);
         }
         animate();
+
+        // ウィンドウサイズ変更対応
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
     </script>
 </body>
 </html>
