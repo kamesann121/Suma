@@ -2,14 +2,17 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>t</title>
+    <title>新しいタブ</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; }
-        #debug { position: absolute; top: 10px; left: 10px; color: #0f0; background: rgba(0,0,0,0.7); padding: 10px; z-index: 20; font-family: monospace; font-size: 12px; }
+        #debug { position: absolute; top: 10px; left: 10px; color: #0f0; background: rgba(0,0,0,0.7); padding: 10px; z-index: 20; font-family: monospace; font-size: 12px; border: 1px solid #0f0; }
+        #crosshair { position: absolute; top: 50%; left: 50%; width: 10px; height: 10px; border: 1px solid white; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none; }
     </style>
 </head>
 <body>
     <div id="debug">Initializing...</div>
+    <div id="crosshair"></div>
+
     <script type="importmap">
     {
         "imports": { 
@@ -18,6 +21,7 @@
         }
     }
     </script>
+
     <script type="module">
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
@@ -26,52 +30,67 @@
         const debugElement = document.getElementById('debug');
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0x87CEEB);
-        const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
-        camera.position.set(0, 2, 5);
+        
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
         document.body.appendChild(renderer.domElement);
+
+        // ライト設定
         scene.add(new THREE.AmbientLight(0xffffff, 2));
+        const sun = new THREE.DirectionalLight(0xffffff, 1);
+        sun.position.set(5, 10, 5);
+        scene.add(sun);
+
+        // 地面
+        const floor = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), new THREE.MeshStandardMaterial({ color: 0x333333 }));
+        floor.rotation.x = -Math.PI / 2;
+        scene.add(floor);
+
+        const playerGroup = new THREE.Group();
+        scene.add(playerGroup);
+        const modelContainer = new THREE.Group();
+        playerGroup.add(modelContainer);
 
         let mixer, actions = {}, currentAction;
+        const clock = new THREE.Clock();
 
-        // Draco設定（これがないとnight.glbが読めない可能性が高い）
         const dracoLoader = new DRACOLoader();
         dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
         const loader = new GLTFLoader();
         loader.setDRACOLoader(dracoLoader);
 
-        debugElement.innerHTML = "Step 1: Loading night.glb...";
-
-        // 1. 体となる night.glb を読み込む
+        // --- モデルとモーションのロード ---
         loader.load('./night.glb', (gltf) => {
-            debugElement.innerHTML = "Step 2: night.glb Loaded. Loading idle.glb...";
             const model = gltf.scene;
-            scene.add(model);
+            model.scale.set(1.5, 1.5, 1.5);
+            model.rotation.y = Math.PI;
+            modelContainer.add(model);
             mixer = new THREE.AnimationMixer(model);
 
+            // Walk登録
             if (gltf.animations.length > 0) {
                 actions['walk'] = mixer.clipAction(gltf.animations[0]);
             }
 
-            // 2. idle.glb を読み込む
             loader.load('./idle.glb', (idleGltf) => {
                 if (idleGltf.animations.length > 0) {
-                    actions['idle'] = mixer.clipAction(idleGltf.animations[0]);
+                    const idleClip = idleGltf.animations[0].clone();
+                    
+                    // 【骨の名前変換】mixamorig等の接頭辞を消して一致させる
+                    idleClip.tracks.forEach(track => {
+                        track.name = track.name.replace('mixamorig_', '').replace('mixamorig:', '').replace('mixamorig.', '');
+                    });
+
+                    actions['idle'] = mixer.clipAction(idleClip);
                     currentAction = actions['idle'];
                     currentAction.play();
-                    debugElement.innerHTML = "ALL SUCCESS: Ready to Move!";
-                } else {
-                    debugElement.innerHTML = "Error: idle.glb has no animation.";
+                    debugElement.innerHTML = "ALL SUCCESS: Ready!";
                 }
-            }, undefined, (err) => {
-                debugElement.innerHTML = "Error loading idle.glb. check filename!";
-            });
+            }, undefined, () => debugElement.innerHTML = "Idle Load Failed");
+        }, undefined, () => debugElement.innerHTML = "Night Load Failed");
 
-        }, undefined, (err) => {
-            debugElement.innerHTML = "Error loading night.glb. check filename!";
-        });
-
+        // アニメーション切り替え
         function fadeTo(name) {
             const next = actions[name];
             if (!next || currentAction === next) return;
@@ -80,19 +99,69 @@
             currentAction = next;
         }
 
+        // 入力管理
+        let cameraYaw = 0, cameraPitch = 0, modelYaw = 0;
         const keys = {};
+        document.addEventListener('click', () => document.body.requestPointerLock());
+        document.addEventListener('mousemove', (e) => {
+            if (document.pointerLockElement === document.body) {
+                cameraYaw -= e.movementX * 0.003;
+                cameraPitch -= e.movementY * 0.003;
+                cameraPitch = Math.max(-Math.PI/3, Math.min(Math.PI/3, cameraPitch));
+            }
+        });
         window.addEventListener('keydown', (e) => keys[e.code] = true);
         window.addEventListener('keyup', (e) => keys[e.code] = false);
 
-        const clock = new THREE.Clock();
         function animate() {
             requestAnimationFrame(animate);
-            if (mixer) mixer.update(clock.getDelta());
+            const delta = clock.getDelta();
+            if (mixer) mixer.update(delta);
 
-            const isMoving = keys['KeyE'] || keys['KeyS'] || keys['KeyQ'] || keys['KeyC'];
-            if (actions['idle'] && actions['walk']) {
-                fadeTo(isMoving ? 'walk' : 'idle');
+            if (document.pointerLockElement === document.body) {
+                const isMoving = keys['KeyE'] || keys['KeyS'] || keys['KeyQ'] || keys['KeyC'];
+                const moveSpeed = 0.15;
+
+                // モーション切り替え判定
+                if (isMoving) {
+                    fadeTo('walk');
+                } else {
+                    fadeTo('idle');
+                }
+
+                // 移動計算
+                if (keys['KeyE']) {
+                    playerGroup.position.x -= Math.sin(cameraYaw) * moveSpeed;
+                    playerGroup.position.z -= Math.cos(cameraYaw) * moveSpeed;
+                }
+                if (keys['KeyS']) {
+                    playerGroup.position.x += Math.sin(cameraYaw) * moveSpeed;
+                    playerGroup.position.z += Math.cos(cameraYaw) * moveSpeed;
+                }
+                if (keys['KeyQ']) {
+                    playerGroup.position.x -= Math.cos(cameraYaw) * moveSpeed;
+                    playerGroup.position.z += Math.sin(cameraYaw) * moveSpeed;
+                }
+                if (keys['KeyC']) {
+                    playerGroup.position.x += Math.cos(cameraYaw) * moveSpeed;
+                    playerGroup.position.z -= Math.sin(cameraYaw) * moveSpeed;
+                }
+
+                // モデルの向きをカメラに合わせる
+                let diff = cameraYaw - modelYaw;
+                while (diff < -Math.PI) diff += Math.PI * 2;
+                while (diff > Math.PI) diff -= Math.PI * 2;
+                if (isMoving) modelYaw += diff * 0.1;
+                modelContainer.rotation.y = modelYaw;
             }
+
+            // カメラ追従
+            const offset = new THREE.Vector3(0, 2.5, 5);
+            const quat = new THREE.Quaternion().setFromEuler(new THREE.Euler(cameraPitch, cameraYaw, 0, 'YXZ'));
+            offset.applyQuaternion(quat);
+            camera.position.copy(playerGroup.position).add(offset);
+            camera.lookAt(playerGroup.position.clone().add(new THREE.Vector3(0, 1.5, 0)));
+
             renderer.render(scene, camera);
         }
         animate();
