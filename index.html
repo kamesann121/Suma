@@ -10,7 +10,7 @@
     </style>
 </head>
 <body>
-    <div id="debug">Initializing...</div>
+    <div id="debug">Loading combined model...</div>
     <div id="crosshair"></div>
 
     <script type="importmap">
@@ -36,14 +36,12 @@
         renderer.setSize(window.innerWidth, window.innerHeight);
         document.body.appendChild(renderer.domElement);
 
-        // ライト設定
         scene.add(new THREE.AmbientLight(0xffffff, 2));
-        const sun = new THREE.DirectionalLight(0xffffff, 1);
+        const sun = new THREE.DirectionalLight(0xffffff, 1.2);
         sun.position.set(5, 10, 5);
         scene.add(sun);
 
-        // 地面
-        const floor = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), new THREE.MeshStandardMaterial({ color: 0x333333 }));
+        const floor = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshStandardMaterial({ color: 0x555555 }));
         floor.rotation.x = -Math.PI / 2;
         scene.add(floor);
 
@@ -60,37 +58,35 @@
         const loader = new GLTFLoader();
         loader.setDRACOLoader(dracoLoader);
 
-        // --- モデルとモーションのロード ---
-        loader.load('./night.glb', (gltf) => {
+        // --- 合体させたファイルを読み込む ---
+        // ※ ファイル名は GitHub に上げた名前に書き換えてください
+        loader.load('./combined.glb', (gltf) => {
             const model = gltf.scene;
-            model.scale.set(1.5, 1.5, 1.5);
+            model.scale.set(1, 1, 1); // リアル系なら1.0前後。小さければ大きくして
             model.rotation.y = Math.PI;
             modelContainer.add(model);
+            
             mixer = new THREE.AnimationMixer(model);
 
-            // Walk登録
-            if (gltf.animations.length > 0) {
-                actions['walk'] = mixer.clipAction(gltf.animations[0]);
-            }
+            // アニメーションを番号で取得（0番と1番があるはず）
+            let list = "Animations Found:<br>";
+            gltf.animations.forEach((clip, i) => {
+                const name = clip.name.toLowerCase();
+                actions[i] = mixer.clipAction(clip);
+                list += `[${i}] ${clip.name}<br>`;
+            });
 
-            loader.load('./idle.glb', (idleGltf) => {
-                if (idleGltf.animations.length > 0) {
-                    const idleClip = idleGltf.animations[0].clone();
-                    
-                    // 【骨の名前変換】mixamorig等の接頭辞を消して一致させる
-                    idleClip.tracks.forEach(track => {
-                        track.name = track.name.replace('mixamorig_', '').replace('mixamorig:', '').replace('mixamorig.', '');
-                    });
+            // ★ここで番号を指定！★
+            // もし「止まってるのに歩く」なら、0 と 1 を入れ替えてみて
+            actions['idle'] = actions[0]; 
+            actions['walk'] = actions[1] || actions[0];
 
-                    actions['idle'] = mixer.clipAction(idleClip);
-                    currentAction = actions['idle'];
-                    currentAction.play();
-                    debugElement.innerHTML = "ALL SUCCESS: Ready!";
-                }
-            }, undefined, () => debugElement.innerHTML = "Idle Load Failed");
-        }, undefined, () => debugElement.innerHTML = "Night Load Failed");
+            currentAction = actions['idle'];
+            if (currentAction) currentAction.play();
+            
+            debugElement.innerHTML = list + "<hr>Status: Ready!";
+        }, undefined, (e) => debugElement.innerHTML = "Load Error: " + e.message);
 
-        // アニメーション切り替え
         function fadeTo(name) {
             const next = actions[name];
             if (!next || currentAction === next) return;
@@ -99,14 +95,13 @@
             currentAction = next;
         }
 
-        // 入力管理
         let cameraYaw = 0, cameraPitch = 0, modelYaw = 0;
         const keys = {};
         document.addEventListener('click', () => document.body.requestPointerLock());
         document.addEventListener('mousemove', (e) => {
             if (document.pointerLockElement === document.body) {
                 cameraYaw -= e.movementX * 0.003;
-                cameraPitch -= e.movementY * 0.003;
+                cameraPitch -= e.movementY * 0.002;
                 cameraPitch = Math.max(-Math.PI/3, Math.min(Math.PI/3, cameraPitch));
             }
         });
@@ -120,16 +115,16 @@
 
             if (document.pointerLockElement === document.body) {
                 const isMoving = keys['KeyE'] || keys['KeyS'] || keys['KeyQ'] || keys['KeyC'];
-                const moveSpeed = 0.15;
-
-                // モーション切り替え判定
+                
+                // モーション切り替え
                 if (isMoving) {
                     fadeTo('walk');
                 } else {
                     fadeTo('idle');
                 }
 
-                // 移動計算
+                // 移動
+                const moveSpeed = 0.12;
                 if (keys['KeyE']) {
                     playerGroup.position.x -= Math.sin(cameraYaw) * moveSpeed;
                     playerGroup.position.z -= Math.cos(cameraYaw) * moveSpeed;
@@ -147,7 +142,7 @@
                     playerGroup.position.z -= Math.sin(cameraYaw) * moveSpeed;
                 }
 
-                // モデルの向きをカメラに合わせる
+                // モデルの向き
                 let diff = cameraYaw - modelYaw;
                 while (diff < -Math.PI) diff += Math.PI * 2;
                 while (diff > Math.PI) diff -= Math.PI * 2;
@@ -155,8 +150,8 @@
                 modelContainer.rotation.y = modelYaw;
             }
 
-            // カメラ追従
-            const offset = new THREE.Vector3(0, 2.5, 5);
+            // 三人称カメラ追従
+            const offset = new THREE.Vector3(0, 1.8, 4); 
             const quat = new THREE.Quaternion().setFromEuler(new THREE.Euler(cameraPitch, cameraYaw, 0, 'YXZ'));
             offset.applyQuaternion(quat);
             camera.position.copy(playerGroup.position).add(offset);
