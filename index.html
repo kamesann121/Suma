@@ -11,7 +11,7 @@
 </head>
 <body>
     <div id="crosshair"></div>
-    <div id="debug">Loading files...</div>
+    <div id="debug">Loading GLB files...</div>
 
     <script type="importmap">
     {
@@ -26,7 +26,6 @@
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
         import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
-        import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 
         const debugElement = document.getElementById('debug');
         const scene = new THREE.Scene();
@@ -58,7 +57,6 @@
 
         const gltfLoader = new GLTFLoader();
         gltfLoader.setDRACOLoader(dracoLoader);
-        const fbxLoader = new FBXLoader();
 
         // 1. メインモデル(night.glb)をロード
         gltfLoader.load('./night.glb', (gltf) => {
@@ -74,32 +72,33 @@
                 actions['walk'] = mixer.clipAction(gltf.animations[0]);
             }
 
-            // 2. 待機モーション(idle.fbx)をロード
-            fbxLoader.load('./idle.fbx', (fbx) => {
-                if (fbx.animations.length > 0) {
-                    // FBXのアニメーションをGLBのモデルに適用
-                    actions['idle'] = mixer.clipAction(fbx.animations[0]);
+            // 2. 変換した待機モーション(idle.glb)をロード
+            gltfLoader.load('./idle.glb', (idleGltf) => {
+                if (idleGltf.animations.length > 0) {
+                    // ここで idle.glb のモーションをメインモデルの mixer に繋ぐ
+                    actions['idle'] = mixer.clipAction(idleGltf.animations[0]);
                     
-                    // 最初は待機状態からスタート
+                    // 最初は待機状態
                     currentAction = actions['idle'];
                     currentAction.play();
-                    debugElement.innerHTML = "Files loaded.<br>Current: [idle]";
+                    debugElement.innerHTML = "Success: Both GLBs ready.<br>Current: [idle]";
                 } else {
-                    debugElement.innerHTML = "FBX loaded but no animation found.";
+                    debugElement.innerHTML = "idle.glb loaded but NO animation found.";
                 }
             }, undefined, (err) => {
-                debugElement.innerHTML = "Error loading FBX: " + err.message;
+                debugElement.innerHTML = "Error loading idle.glb: Check filename.";
             });
 
         }, undefined, (err) => {
-            debugElement.innerHTML = "Error loading GLB: " + err.message;
+            debugElement.innerHTML = "Error loading night.glb: Check filename.";
         });
 
+        // スムーズに切り替える関数
         function fadeTo(name) {
             const nextAction = actions[name];
             if (!nextAction || currentAction === nextAction) return;
             
-            debugElement.innerHTML = `Current: [${name}]`;
+            debugElement.innerHTML = `Success: Both GLBs ready.<br>Current: [${name}]`;
             
             nextAction.reset().fadeIn(0.2).play();
             if (currentAction) currentAction.fadeOut(0.2);
@@ -127,20 +126,21 @@
             if (mixer) mixer.update(delta);
 
             if (document.pointerLockElement === document.body) {
+                // キー入力判定
                 const isMoving = keys['KeyE'] || keys['KeyS'] || keys['KeyQ'] || keys['KeyC'];
                 const onGround = playerGroup.position.y <= 0.01;
                 const moveSpeed = 0.15;
 
-                // --- アニメーション切り替えロジック ---
-                if (!onGround) {
-                    // ジャンプがないので一旦walk（必要なら'idle'に変更）
-                    fadeTo('walk'); 
-                } else if (isMoving) {
-                    fadeTo('walk'); 
-                } else {
-                    fadeTo('idle'); 
+                // --- モーション自動切り替えロジック ---
+                if (onGround) {
+                    if (isMoving) {
+                        fadeTo('walk'); 
+                    } else {
+                        fadeTo('idle'); 
+                    }
                 }
 
+                // 移動処理
                 if (keys['KeyE']) {
                     playerGroup.position.x -= Math.sin(cameraYaw) * moveSpeed;
                     playerGroup.position.z -= Math.cos(cameraYaw) * moveSpeed;
@@ -163,6 +163,7 @@
                 if (playerGroup.position.y < 0) { playerGroup.position.y = 0; velocityY = 0; }
                 if (keys['Space'] && onGround) velocityY = 0.25;
 
+                // 向きの回転処理
                 let diff = cameraYaw - modelYaw;
                 while (diff < -Math.PI) diff += Math.PI * 2;
                 while (diff > Math.PI) diff -= Math.PI * 2;
@@ -174,6 +175,7 @@
                 modelContainer.rotation.y = modelYaw;
             }
 
+            // カメラの追従
             const offset = new THREE.Vector3(0, 2.5, 5.0); 
             const quat = new THREE.Quaternion().setFromEuler(new THREE.Euler(cameraPitch, cameraYaw, 0, 'YXZ'));
             offset.applyQuaternion(quat);
