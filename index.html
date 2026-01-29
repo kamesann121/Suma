@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>3D Game - WASD Version</title>
+    <title>「</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; }
         #crosshair { position: absolute; top: 50%; left: 50%; width: 12px; height: 12px; border: 2px solid white; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none; z-index: 10; }
@@ -63,25 +63,17 @@
 
             if (gltf.animations.length > 0) {
                 mixer = new THREE.AnimationMixer(playerModel);
-                
-                // 【重要】コンソールで番号を確認してください
-                console.log("--- アニメーション対応表 ---");
                 gltf.animations.forEach((clip, index) => {
-                    console.log(`${index}番: ${clip.name}`);
                     actions[index] = mixer.clipAction(clip);
                 });
-
-                // 初期状態：0番（Idle想定）を再生
                 currentAction = actions[0];
                 if (currentAction) currentAction.play();
             }
-        }, undefined, (e) => console.error(e));
+        });
 
-        // モーション切り替え関数（安全版）
         function fadeTo(index) {
             const nextAction = actions[index];
             if (!nextAction || currentAction === nextAction) return;
-            
             nextAction.reset().fadeIn(0.2).play();
             if (currentAction) currentAction.fadeOut(0.2);
             currentAction = nextAction;
@@ -99,8 +91,8 @@
             cameraPitch = Math.max(-Math.PI/3, Math.min(Math.PI/3, cameraPitch));
         });
 
-        window.addEventListener('keydown', (e) => { keys[e.code] = true; });
-        window.addEventListener('keyup', (e) => { keys[e.code] = false; });
+        window.addEventListener('keydown', (e) => keys[e.code] = true);
+        window.addEventListener('keyup', (e) => keys[e.code] = false);
 
         function animate() {
             requestAnimationFrame(animate);
@@ -108,22 +100,21 @@
             if (mixer) mixer.update(delta);
 
             if (document.pointerLockElement === document.body) {
-                // WASDで判定を統一
-                const isMoving = keys['KeyW'] || keys['KeyS'] || keys['KeyA'] || keys['KeyD'];
+                // 【修正点】判定キーを E/S/Q/C に合わせました
+                const isMoving = keys['KeyE'] || keys['KeyS'] || keys['KeyQ'] || keys['KeyC'];
                 const onGround = playerGroup.position.y <= 0.01;
                 const moveSpeed = 0.15;
 
-                // --- モーション判定 ---
+                // --- モーション自動判定 ---
                 if (!onGround) {
-                    fadeTo(3); // 空中
+                    if (actions[3]) fadeTo(3); // 空中
                 } else if (isMoving) {
-                    fadeTo(1); // 歩き（もし走るならここを調整）
+                    if (actions[1]) fadeTo(1); // 歩き
                 } else {
-                    fadeTo(0); // 待機
+                    if (actions[0]) fadeTo(0); // 待機
                 }
 
-                // --- 移動 (WASD) ---
-                if (keys['KeyW']) {
+                if (keys['KeyE']) {
                     playerGroup.position.x -= Math.sin(cameraYaw) * moveSpeed;
                     playerGroup.position.z -= Math.cos(cameraYaw) * moveSpeed;
                 }
@@ -131,11 +122,11 @@
                     playerGroup.position.x += Math.sin(cameraYaw) * moveSpeed;
                     playerGroup.position.z += Math.cos(cameraYaw) * moveSpeed;
                 }
-                if (keys['KeyA']) {
+                if (keys['KeyQ']) {
                     playerGroup.position.x -= Math.cos(cameraYaw) * moveSpeed;
                     playerGroup.position.z += Math.sin(cameraYaw) * moveSpeed;
                 }
-                if (keys['KeyD']) {
+                if (keys['KeyC']) {
                     playerGroup.position.x += Math.cos(cameraYaw) * moveSpeed;
                     playerGroup.position.z -= Math.sin(cameraYaw) * moveSpeed;
                 }
@@ -145,7 +136,6 @@
                 if (playerGroup.position.y < 0) { playerGroup.position.y = 0; velocityY = 0; }
                 if (keys['Space'] && onGround) velocityY = 0.25;
 
-                // モデルの向きを進行方向にスムーズに回転
                 let diff = cameraYaw - modelYaw;
                 while (diff < -Math.PI) diff += Math.PI * 2;
                 while (diff > Math.PI) diff -= Math.PI * 2;
@@ -166,12 +156,6 @@
             renderer.render(scene, camera);
         }
         animate();
-
-        window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        });
     </script>
 </body>
 </html>
