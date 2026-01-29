@@ -5,180 +5,79 @@
     <title>新しいタブ</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; }
-        #crosshair { position: absolute; top: 50%; left: 50%; width: 12px; height: 12px; border: 2px solid white; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none; z-index: 10; }
-        #debug { position: absolute; top: 10px; left: 10px; color: #0f0; background: rgba(0,0,0,0.7); padding: 10px; font-family: monospace; font-size: 14px; z-index: 20; pointer-events: none; border: 1px solid #0f0; }
+        #debug { position: absolute; top: 10px; left: 10px; color: #0f0; background: rgba(0,0,0,0.7); padding: 10px; z-index: 20; font-family: monospace; }
     </style>
 </head>
 <body>
-    <div id="crosshair"></div>
-    <div id="debug">Loading combined.glb...</div>
-
+    <div id="debug">Loading...</div>
     <script type="importmap">
     {
-        "imports": {
-            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-            "three/examples/jsm/": "https://unpkg.com/three@0.160.0/examples/jsm/"
-        }
+        "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js", "three/examples/jsm/": "https://unpkg.com/three@0.160.0/examples/jsm/" }
     }
     </script>
-
     <script type="module">
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-        import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
-
+        
         const debugElement = document.getElementById('debug');
         const scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x87CEEB); 
-        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        scene.background = new THREE.Color(0x87CEEB);
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
         document.body.appendChild(renderer.domElement);
-
-        scene.add(new THREE.AmbientLight(0xffffff, 1.8)); 
-        const sun = new THREE.DirectionalLight(0xffffff, 1.5);
-        sun.position.set(10, 20, 10);
-        scene.add(sun);
-
-        const floor = new THREE.Mesh(new THREE.PlaneGeometry(500, 500), new THREE.MeshStandardMaterial({ color: 0x444444 }));
-        floor.rotation.x = -Math.PI / 2;
-        scene.add(floor);
-
-        const playerGroup = new THREE.Group();
-        scene.add(playerGroup);
-        const modelContainer = new THREE.Group(); 
-        playerGroup.add(modelContainer);
+        scene.add(new THREE.AmbientLight(0xffffff, 2));
 
         let mixer, actions = {}, currentAction;
-        const clock = new THREE.Clock();
+        const loader = new GLTFLoader();
 
-        const dracoLoader = new DRACOLoader();
-        dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
+        // 1. 体となる night.glb を読み込む
+        loader.load('./night.glb', (gltf) => {
+            const model = gltf.scene;
+            scene.add(model);
+            mixer = new THREE.AnimationMixer(model);
 
-        const gltfLoader = new GLTFLoader();
-        gltfLoader.setDRACOLoader(dracoLoader);
-
-        gltfLoader.load('./combined.glb', (gltf) => {
-            const playerModel = gltf.scene;
-            playerModel.scale.set(1.5, 1.5, 1.5);
-            playerModel.rotation.y = Math.PI; 
-            modelContainer.add(playerModel);
-
-            mixer = new THREE.AnimationMixer(playerModel);
-            
-            // アニメーションを自動で「名前」で仕分ける
-            let listInfo = "Animations:<br>";
-            gltf.animations.forEach((clip, index) => {
-                const action = mixer.clipAction(clip);
-                const name = clip.name.toLowerCase();
-                
-                // 名前に 'walk' が入っていれば walk、なければ idle とみなす
-                if (name.includes('walk')) {
-                    actions['walk'] = action;
-                } else {
-                    actions['idle'] = action;
-                }
-                
-                // デバッグ用に番号も保持（保険）
-                actions[index] = action;
-                listInfo += `[${index}] ${clip.name}<br>`;
-            });
-
-            // 最低限のフォールバック（名前で見つからなかった場合）
-            if (!actions['idle']) actions['idle'] = actions[0];
-            if (!actions['walk']) actions['walk'] = actions[1] || actions[0];
-
-            currentAction = actions['idle'];
-            if (currentAction) currentAction.play();
-            
-            debugElement.innerHTML = listInfo + "<hr>Status: Ready";
-        }, undefined, (err) => {
-            debugElement.innerHTML = "Load Error: " + err.message;
-        });
-
-        // 安全な切り替え関数
-        function fadeTo(id) {
-            const nextAction = actions[id];
-            // ターゲットが存在しない、または現在と同じなら何もしない
-            if (!nextAction || currentAction === nextAction) return;
-            
-            nextAction.reset().fadeIn(0.2).play();
-            if (currentAction) currentAction.fadeOut(0.2);
-            currentAction = nextAction;
-        }
-
-        let cameraYaw = 0, cameraPitch = 0, modelYaw = 0;
-        let velocityY = 0;
-        const keys = {};
-
-        document.addEventListener('click', () => document.body.requestPointerLock());
-        document.addEventListener('mousemove', (e) => {
-            if (document.pointerLockElement !== document.body) return;
-            cameraYaw -= e.movementX * 0.003;
-            cameraPitch -= e.movementY * 0.003;
-            cameraPitch = Math.max(-Math.PI/3, Math.min(Math.PI/3, cameraPitch));
-        });
-
-        window.addEventListener('keydown', (e) => keys[e.code] = true);
-        window.addEventListener('keyup', (e) => keys[e.code] = false);
-
-        function animate() {
-            requestAnimationFrame(animate);
-            const delta = clock.getDelta();
-            if (mixer) mixer.update(delta);
-
-            if (document.pointerLockElement === document.body) {
-                const isMoving = keys['KeyE'] || keys['KeyS'] || keys['KeyQ'] || keys['KeyC'];
-                const onGround = playerGroup.position.y <= 0.01;
-                const moveSpeed = 0.15;
-
-                // --- 名前で指定するので、数字を気にしなくてOK ---
-                if (onGround) {
-                    if (isMoving) {
-                        fadeTo('walk'); 
-                    } else {
-                        fadeTo('idle'); 
-                    }
-                }
-
-                if (keys['KeyE']) {
-                    playerGroup.position.x -= Math.sin(cameraYaw) * moveSpeed;
-                    playerGroup.position.z -= Math.cos(cameraYaw) * moveSpeed;
-                }
-                if (keys['KeyS']) {
-                    playerGroup.position.x += Math.sin(cameraYaw) * moveSpeed;
-                    playerGroup.position.z += Math.cos(cameraYaw) * moveSpeed;
-                }
-                if (keys['KeyQ']) {
-                    playerGroup.position.x -= Math.cos(cameraYaw) * moveSpeed;
-                    playerGroup.position.z += Math.sin(cameraYaw) * moveSpeed;
-                }
-                if (keys['KeyC']) {
-                    playerGroup.position.x += Math.cos(cameraYaw) * moveSpeed;
-                    playerGroup.position.z -= Math.sin(cameraYaw) * moveSpeed;
-                }
-
-                velocityY -= 0.012;
-                playerGroup.position.y += velocityY;
-                if (playerGroup.position.y < 0) { playerGroup.position.y = 0; velocityY = 0; }
-                if (keys['Space'] && onGround) velocityY = 0.25;
-
-                let diff = cameraYaw - modelYaw;
-                while (diff < -Math.PI) diff += Math.PI * 2;
-                while (diff > Math.PI) diff -= Math.PI * 2;
-                if (isMoving) {
-                    modelYaw += diff * 0.15;
-                } else if (Math.abs(diff) > Math.PI/2.5) {
-                    modelYaw += Math.sign(diff) * (Math.abs(diff) - Math.PI/2.5) * 0.1;
-                }
-                modelContainer.rotation.y = modelYaw;
+            // 元から入っているモーションを walk にする
+            if (gltf.animations.length > 0) {
+                actions['walk'] = mixer.clipAction(gltf.animations[0]);
             }
 
-            const offset = new THREE.Vector3(0, 2.5, 5.0); 
-            const quat = new THREE.Quaternion().setFromEuler(new THREE.Euler(cameraPitch, cameraYaw, 0, 'YXZ'));
-            offset.applyQuaternion(quat);
-            camera.position.copy(playerGroup.position).add(offset);
-            camera.lookAt(playerGroup.position.clone().add(new THREE.Vector3(0, 1.8, 0)));
+            // 2. idle.glb からモーションだけを借りてくる
+            loader.load('./idle.glb', (idleGltf) => {
+                if (idleGltf.animations.length > 0) {
+                    const idleClip = idleGltf.animations[0];
+                    actions['idle'] = mixer.clipAction(idleClip);
+                    
+                    currentAction = actions['idle'];
+                    currentAction.play();
+                    debugElement.innerHTML = "Ready: Idle & Walk loaded";
+                }
+            });
+        });
+
+        // アニメーション切り替え関数
+        function fadeTo(name) {
+            const next = actions[name];
+            if (!next || currentAction === next) return;
+            next.reset().fadeIn(0.2).play();
+            if (currentAction) currentAction.fadeOut(0.2);
+            currentAction = next;
+        }
+
+        const keys = {};
+        window.onkeydown = (e) => keys[e.code] = true;
+        window.onkeyup = (e) => keys[e.code] = false;
+
+        const clock = new THREE.Clock();
+        function animate() {
+            requestAnimationFrame(animate);
+            if (mixer) mixer.update(clock.getDelta());
+
+            const isMoving = keys['KeyE'] || keys['KeyS'] || keys['KeyQ'] || keys['KeyC'];
+            // 2つのアクションが揃っていれば切り替え
+            if (actions['idle'] && actions['walk']) {
+                fadeTo(isMoving ? 'walk' : 'idle');
+            }
 
             renderer.render(scene, camera);
         }
