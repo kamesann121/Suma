@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>3D Character Test</title>
+    <title>新しいタブ</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; }
         #crosshair { position: absolute; top: 50%; left: 50%; width: 12px; height: 12px; border: 2px solid white; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none; z-index: 10; }
@@ -11,7 +11,7 @@
 </head>
 <body>
     <div id="crosshair"></div>
-    <div id="debug">Loading combined model...</div>
+    <div id="debug">Loading combined.glb...</div>
 
     <script type="importmap">
     {
@@ -58,7 +58,6 @@
         const gltfLoader = new GLTFLoader();
         gltfLoader.setDRACOLoader(dracoLoader);
 
-        // ★★★ ここで統合したファイルを読み込む ★★★
         gltfLoader.load('./combined.glb', (gltf) => {
             const playerModel = gltf.scene;
             playerModel.scale.set(1.5, 1.5, 1.5);
@@ -67,24 +66,40 @@
 
             mixer = new THREE.AnimationMixer(playerModel);
             
-            // 全アニメーションを表示して確認しやすくする
-            let infoText = "Animations found:<br>";
+            // アニメーションを自動で「名前」で仕分ける
+            let listInfo = "Animations:<br>";
             gltf.animations.forEach((clip, index) => {
-                actions[index] = mixer.clipAction(clip);
-                infoText += `[${index}] ${clip.name}<br>`;
+                const action = mixer.clipAction(clip);
+                const name = clip.name.toLowerCase();
+                
+                // 名前に 'walk' が入っていれば walk、なければ idle とみなす
+                if (name.includes('walk')) {
+                    actions['walk'] = action;
+                } else {
+                    actions['idle'] = action;
+                }
+                
+                // デバッグ用に番号も保持（保険）
+                actions[index] = action;
+                listInfo += `[${index}] ${clip.name}<br>`;
             });
-            debugElement.innerHTML = infoText + "<hr>Check index for Idle/Walk";
 
-            // ★ 読み込んだ順番に合わせて再生（まずは0番を仮にIdleとする）
-            currentAction = actions[0];
+            // 最低限のフォールバック（名前で見つからなかった場合）
+            if (!actions['idle']) actions['idle'] = actions[0];
+            if (!actions['walk']) actions['walk'] = actions[1] || actions[0];
+
+            currentAction = actions['idle'];
             if (currentAction) currentAction.play();
-
+            
+            debugElement.innerHTML = listInfo + "<hr>Status: Ready";
         }, undefined, (err) => {
-            debugElement.innerHTML = "Error loading combined.glb: Check filename.";
+            debugElement.innerHTML = "Load Error: " + err.message;
         });
 
-        function fadeTo(index) {
-            const nextAction = actions[index];
+        // 安全な切り替え関数
+        function fadeTo(id) {
+            const nextAction = actions[id];
+            // ターゲットが存在しない、または現在と同じなら何もしない
             if (!nextAction || currentAction === nextAction) return;
             
             nextAction.reset().fadeIn(0.2).play();
@@ -117,13 +132,12 @@
                 const onGround = playerGroup.position.y <= 0.01;
                 const moveSpeed = 0.15;
 
-                // --- アニメーション切り替えロジック（インデックスをリストに合わせて調整） ---
-                // 左上の表示を見て、IdleとWalkの番号が違っていたらここを書き換えてください！
+                // --- 名前で指定するので、数字を気にしなくてOK ---
                 if (onGround) {
                     if (isMoving) {
-                        fadeTo(0)); // 例: 1番がWalkの場合
+                        fadeTo('walk'); 
                     } else {
-                        fadeTo(1); // 例: 0番がIdleの場合
+                        fadeTo('idle'); 
                     }
                 }
 
