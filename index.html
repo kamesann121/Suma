@@ -2,14 +2,21 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>新しいタブ</title>
+    <title>3D Mannequin Controller</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; }
-        #debug { position: absolute; top: 10px; left: 10px; color: #0f0; background: rgba(0,0,0,0.7); padding: 10px; z-index: 20; font-family: monospace; font-size: 12px; border: 1px solid #0f0; }
+        /* 左上のデバッグ表示 */
+        #debug { 
+            position: absolute; top: 10px; left: 10px; 
+            color: #0f0; background: rgba(0,0,0,0.8); 
+            padding: 10px; z-index: 20; font-family: monospace; 
+            font-size: 11px; border: 1px solid #0f0; 
+            max-height: 90vh; overflow-y: auto; width: 280px; 
+        }
     </style>
 </head>
 <body>
-    <div id="debug">Loading combined model...</div>
+    <div id="debug">Scanning Mannequin...</div>
 
     <script type="importmap">
     {
@@ -27,7 +34,7 @@
 
         const debugElement = document.getElementById('debug');
         const scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x87CEEB);
+        scene.background = new THREE.Color(0x222222);
         
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
         const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -35,13 +42,12 @@
         document.body.appendChild(renderer.domElement);
 
         scene.add(new THREE.AmbientLight(0xffffff, 2));
-        const sun = new THREE.DirectionalLight(0xffffff, 1.2);
+        const sun = new THREE.DirectionalLight(0xffffff, 1.5);
         sun.position.set(5, 10, 5);
         scene.add(sun);
 
-        const floor = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshStandardMaterial({ color: 0x555555 }));
-        floor.rotation.x = -Math.PI / 2;
-        scene.add(floor);
+        const grid = new THREE.GridHelper(200, 50, 0xffffff, 0x444444);
+        scene.add(grid);
 
         const playerGroup = new THREE.Group();
         scene.add(playerGroup);
@@ -57,33 +63,35 @@
         loader.setDRACOLoader(dracoLoader);
 
         // --- モデルロード ---
-        // ファイル名はご自身でGitHubに上げた名前に書き換えてください
-        loader.load('Mannequin.glb', (gltf) => {
+        loader.load('./Mannequin.glb', (gltf) => {
             const model = gltf.scene;
-            model.scale.set(1, 1, 1); 
-            model.rotation.y = Math.PI;
             modelContainer.add(model);
+            
+            // 1. モデル内の実際の骨の名前をすべて取得
+            let boneList = [];
+            model.traverse(n => { if(n.isBone) boneList.push(n.name); });
             
             mixer = new THREE.AnimationMixer(model);
 
-            // アニメーション解析と骨の名前の強制変換
+            // 2. アニメーションの骨の名前をモデルに合わせて修正
             gltf.animations.forEach((clip, i) => {
                 const newClip = clip.clone();
                 newClip.tracks.forEach(track => {
-                    // "mixamorig.Hips.position" -> "Hips.position" のように
-                    // 最後のドットより前にある階層名を削除してマッチング率を上げる
                     const parts = track.name.split('.');
-                    const property = parts.pop(); // position, quaternion等
-                    const boneName = parts.pop().split(':').pop().split('_').pop(); // 骨の純粋な名前
-                    track.name = boneName + '.' + property;
+                    const property = parts.pop(); 
+                    const rawBoneName = parts.join('.').split(/[:\/\._]/).pop();
+                    
+                    // 曖昧検索で骨を紐付け
+                    const targetBone = boneList.find(b => b.toLowerCase().includes(rawBoneName.toLowerCase()));
+                    if (targetBone) {
+                        track.name = targetBone + '.' + property;
+                    }
                 });
-
                 actions[i] = mixer.clipAction(newClip);
             });
 
-            // 待機(idle)と歩き(walk)の割り当て
-            // 逆に動く場合はここを入れ替え
-            actions['idle'] = actions[0]; 
+            // 3. 待機(0番)と歩き(1番)をセット ※逆なら入れ替えて
+            actions['idle'] = actions[0];
             actions['walk'] = actions[1] || actions[0];
 
             if (actions['idle']) {
@@ -91,12 +99,15 @@
                 currentAction.play();
             }
             
-            debugElement.innerHTML = `Animations found: ${gltf.animations.length}<br>Status: Running!`;
-        }, undefined, (e) => {
-            debugElement.innerHTML = "Load Error: " + e.message;
-        });
+            debugElement.innerHTML = `
+                <b>[Mannequin Bones]</b><br>${boneList.slice(0, 5).join('<br>')}...<br>
+                <hr><b>[Animations Found]</b><br>
+                ${gltf.animations.map((c,i)=>`[${i}] ${c.name}`).join('<br>')}
+                <hr>Status: Ready!<br>Use E,S,Q,C to Move
+            `;
+        }, undefined, (e) => debugElement.innerHTML = "File Not Found: Mannequin.glb");
 
-        // モーション切り替え
+        // アニメーション切り替え
         function fadeTo(name) {
             const next = actions[name];
             if (!next || currentAction === next) return;
@@ -105,6 +116,7 @@
             currentAction = next;
         }
 
+        // --- カメラ & 操作 ---
         let cameraYaw = 0, cameraPitch = 0, modelYaw = 0;
         const keys = {};
         document.addEventListener('click', () => document.body.requestPointerLock());
@@ -125,27 +137,13 @@
 
             if (document.pointerLockElement === document.body) {
                 const isMoving = keys['KeyE'] || keys['KeyS'] || keys['KeyQ'] || keys['KeyC'];
-                
-                if (isMoving) fadeTo('walk');
-                else fadeTo('idle');
+                if (isMoving) fadeTo('walk'); else fadeTo('idle');
 
                 const moveSpeed = 0.12;
-                if (keys['KeyE']) {
-                    playerGroup.position.x -= Math.sin(cameraYaw) * moveSpeed;
-                    playerGroup.position.z -= Math.cos(cameraYaw) * moveSpeed;
-                }
-                if (keys['KeyS']) {
-                    playerGroup.position.x += Math.sin(cameraYaw) * moveSpeed;
-                    playerGroup.position.z += Math.cos(cameraYaw) * moveSpeed;
-                }
-                if (keys['KeyQ']) {
-                    playerGroup.position.x -= Math.cos(cameraYaw) * moveSpeed;
-                    playerGroup.position.z += Math.sin(cameraYaw) * moveSpeed;
-                }
-                if (keys['KeyC']) {
-                    playerGroup.position.x += Math.cos(cameraYaw) * moveSpeed;
-                    playerGroup.position.z -= Math.sin(cameraYaw) * moveSpeed;
-                }
+                if (keys['KeyE']) { playerGroup.position.x -= Math.sin(cameraYaw) * moveSpeed; playerGroup.position.z -= Math.cos(cameraYaw) * moveSpeed; }
+                if (keys['KeyS']) { playerGroup.position.x += Math.sin(cameraYaw) * moveSpeed; playerGroup.position.z += Math.cos(cameraYaw) * moveSpeed; }
+                if (keys['KeyQ']) { playerGroup.position.x -= Math.cos(cameraYaw) * moveSpeed; playerGroup.position.z += Math.sin(cameraYaw) * moveSpeed; }
+                if (keys['KeyC']) { playerGroup.position.x += Math.cos(cameraYaw) * moveSpeed; playerGroup.position.z -= Math.sin(cameraYaw) * moveSpeed; }
 
                 let diff = cameraYaw - modelYaw;
                 while (diff < -Math.PI) diff += Math.PI * 2;
@@ -159,7 +157,6 @@
             offset.applyQuaternion(quat);
             camera.position.copy(playerGroup.position).add(offset);
             camera.lookAt(playerGroup.position.clone().add(new THREE.Vector3(0, 1.5, 0)));
-
             renderer.render(scene, camera);
         }
         animate();
