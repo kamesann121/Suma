@@ -6,12 +6,10 @@
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; }
         #debug { position: absolute; top: 10px; left: 10px; color: #0f0; background: rgba(0,0,0,0.7); padding: 10px; z-index: 20; font-family: monospace; font-size: 12px; border: 1px solid #0f0; }
-        #crosshair { position: absolute; top: 50%; left: 50%; width: 10px; height: 10px; border: 1px solid white; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none; }
     </style>
 </head>
 <body>
     <div id="debug">Loading combined model...</div>
-    <div id="crosshair"></div>
 
     <script type="importmap">
     {
@@ -58,35 +56,47 @@
         const loader = new GLTFLoader();
         loader.setDRACOLoader(dracoLoader);
 
-        // --- 合体させたファイルを読み込む ---
-        // ※ ファイル名は GitHub に上げた名前に書き換えてください
+        // --- モデルロード ---
+        // ファイル名はご自身でGitHubに上げた名前に書き換えてください
         loader.load('Mannequin.glb', (gltf) => {
             const model = gltf.scene;
-            model.scale.set(1, 1, 1); // リアル系なら1.0前後。小さければ大きくして
+            model.scale.set(1, 1, 1); 
             model.rotation.y = Math.PI;
             modelContainer.add(model);
             
             mixer = new THREE.AnimationMixer(model);
 
-            // アニメーションを番号で取得（0番と1番があるはず）
-            let list = "Animations Found:<br>";
+            // アニメーション解析と骨の名前の強制変換
             gltf.animations.forEach((clip, i) => {
-                const name = clip.name.toLowerCase();
-                actions[i] = mixer.clipAction(clip);
-                list += `[${i}] ${clip.name}<br>`;
+                const newClip = clip.clone();
+                newClip.tracks.forEach(track => {
+                    // "mixamorig.Hips.position" -> "Hips.position" のように
+                    // 最後のドットより前にある階層名を削除してマッチング率を上げる
+                    const parts = track.name.split('.');
+                    const property = parts.pop(); // position, quaternion等
+                    const boneName = parts.pop().split(':').pop().split('_').pop(); // 骨の純粋な名前
+                    track.name = boneName + '.' + property;
+                });
+
+                actions[i] = mixer.clipAction(newClip);
             });
 
-            // ★ここで番号を指定！★
-            // もし「止まってるのに歩く」なら、0 と 1 を入れ替えてみて
+            // 待機(idle)と歩き(walk)の割り当て
+            // 逆に動く場合はここを入れ替え
             actions['idle'] = actions[0]; 
             actions['walk'] = actions[1] || actions[0];
 
-            currentAction = actions['idle'];
-            if (currentAction) currentAction.play();
+            if (actions['idle']) {
+                currentAction = actions['idle'];
+                currentAction.play();
+            }
             
-            debugElement.innerHTML = list + "<hr>Status: Ready!";
-        }, undefined, (e) => debugElement.innerHTML = "Load Error: " + e.message);
+            debugElement.innerHTML = `Animations found: ${gltf.animations.length}<br>Status: Running!`;
+        }, undefined, (e) => {
+            debugElement.innerHTML = "Load Error: " + e.message;
+        });
 
+        // モーション切り替え
         function fadeTo(name) {
             const next = actions[name];
             if (!next || currentAction === next) return;
@@ -116,14 +126,9 @@
             if (document.pointerLockElement === document.body) {
                 const isMoving = keys['KeyE'] || keys['KeyS'] || keys['KeyQ'] || keys['KeyC'];
                 
-                // モーション切り替え
-                if (isMoving) {
-                    fadeTo('walk');
-                } else {
-                    fadeTo('idle');
-                }
+                if (isMoving) fadeTo('walk');
+                else fadeTo('idle');
 
-                // 移動
                 const moveSpeed = 0.12;
                 if (keys['KeyE']) {
                     playerGroup.position.x -= Math.sin(cameraYaw) * moveSpeed;
@@ -142,7 +147,6 @@
                     playerGroup.position.z -= Math.sin(cameraYaw) * moveSpeed;
                 }
 
-                // モデルの向き
                 let diff = cameraYaw - modelYaw;
                 while (diff < -Math.PI) diff += Math.PI * 2;
                 while (diff > Math.PI) diff -= Math.PI * 2;
@@ -150,7 +154,6 @@
                 modelContainer.rotation.y = modelYaw;
             }
 
-            // 三人称カメラ追従
             const offset = new THREE.Vector3(0, 1.8, 4); 
             const quat = new THREE.Quaternion().setFromEuler(new THREE.Euler(cameraPitch, cameraYaw, 0, 'YXZ'));
             offset.applyQuaternion(quat);
