@@ -60,7 +60,7 @@
 
         // --- 合体させたファイルを読み込む ---
         // ※ ファイル名は GitHub に上げた名前に書き換えてください
-        loader.load('./combined.glb', (gltf) => {
+        loader.load('Mannequin.glb', (gltf) => {
             const model = gltf.scene;
             model.scale.set(1, 1, 1); // リアル系なら1.0前後。小さければ大きくして
             model.rotation.y = Math.PI;
