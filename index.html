@@ -2,23 +2,20 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>あx</title>
+    <title>新しいタブt</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #87CEEB; font-family: sans-serif; }
+        body { margin: 0; overflow: hidden; background-color: #000; }
         #crosshair { position: absolute; top: 50%; left: 50%; width: 12px; height: 12px; border: 2px solid white; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none; z-index: 10; }
-        /* 左上の文字を読みやすく */
-        #status { position: absolute; top: 10px; left: 10px; color: black; background: white; padding: 5px; z-index: 100; }
     </style>
 </head>
 <body>
-    <div id="status">Status: Loading...</div>
     <div id="crosshair"></div>
 
     <script type="importmap">
     {
         "imports": {
-            "three": "https://unpkg.com",
-            "three/examples/jsm/": "https://unpkg.com"
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/examples/jsm/": "https://unpkg.com/three@0.160.0/examples/jsm/"
         }
     }
     </script>
@@ -26,7 +23,7 @@
     <script type="module">
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-        import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
+        import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js'; // 圧縮解除用
 
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0x87CEEB); 
@@ -35,7 +32,8 @@
         renderer.setSize(window.innerWidth, window.innerHeight);
         document.body.appendChild(renderer.domElement);
 
-        scene.add(new THREE.AmbientLight(0xffffff, 2.0)); 
+        // ライト
+        scene.add(new THREE.AmbientLight(0xffffff, 1.8)); 
         const sun = new THREE.DirectionalLight(0xffffff, 1.5);
         sun.position.set(10, 20, 10);
         scene.add(sun);
@@ -51,10 +49,10 @@
 
         let mixer, actions = {}, currentAction;
         const clock = new THREE.Clock();
-        const statusEl = document.getElementById('status');
 
+        // --- DracoLoaderの設定（圧縮ファイルを読み込むために必要） ---
         const dracoLoader = new DRACOLoader();
-        dracoLoader.setDecoderPath('https://www.gstatic.com');
+        dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
 
         const gltfLoader = new GLTFLoader();
         gltfLoader.setDRACOLoader(dracoLoader);
@@ -67,40 +65,42 @@
 
             if (gltf.animations.length > 0) {
                 mixer = new THREE.AnimationMixer(playerModel);
+                
+                // アニメーションを整理（名前がわからなくても0, 1, 2で管理）
+                // 一般的な順番：0=Idle, 1=Walk, 2=Run, 3=Jump（モデルにより異なる）
                 gltf.animations.forEach((clip, index) => {
                     actions[index] = mixer.clipAction(clip);
                 });
-                statusEl.innerText = `Animations: ${gltf.animations.length} loaded. Press Click to Start.`;
-                fadeTo(0);
+
+                // 最初は「0番(Idle)」を再生
+                currentAction = actions[0];
+                if (currentAction) currentAction.play();
             }
-        }, undefined, (e) => {
-            statusEl.innerText = "Error loading model: " + e.message;
         });
 
+        // スムーズなモーション切り替え関数
         function fadeTo(index) {
-            if (!actions[index] || currentAction === actions[index]) return;
             const nextAction = actions[index];
+            if (!nextAction || currentAction === nextAction) return;
             nextAction.reset().fadeIn(0.2).play();
-            if (currentAction) currentAction.fadeOut(0.2);
+            currentAction.fadeOut(0.2);
             currentAction = nextAction;
         }
 
-        let cameraYaw = 0, cameraPitch = 0, modelYaw = 0, velocityY = 0;
+        let cameraYaw = 0, cameraPitch = 0, modelYaw = 0;
+        let velocityY = 0;
         const keys = {};
 
-        document.addEventListener('click', () => {
-            document.body.requestPointerLock();
-            statusEl.innerText = "Control: WASD + Space";
+        document.addEventListener('click', () => document.body.requestPointerLock());
+        document.addEventListener('mousemove', (e) => {
+            if (document.pointerLockElement !== document.body) return;
+            cameraYaw -= e.movementX * 0.003;
+            cameraPitch -= e.movementY * 0.003;
+            cameraPitch = Math.max(-Math.PI/3, Math.min(Math.PI/3, cameraPitch));
         });
+
         window.addEventListener('keydown', (e) => keys[e.code] = true);
         window.addEventListener('keyup', (e) => keys[e.code] = false);
-        document.addEventListener('mousemove', (e) => {
-            if (document.pointerLockElement === document.body) {
-                cameraYaw -= e.movementX * 0.003;
-                cameraPitch -= e.movementY * 0.003;
-                cameraPitch = Math.max(-Math.PI/3, Math.min(Math.PI/3, cameraPitch));
-            }
-        });
 
         function animate() {
             requestAnimationFrame(animate);
@@ -108,28 +108,51 @@
             if (mixer) mixer.update(delta);
 
             if (document.pointerLockElement === document.body) {
-                const isMoving = keys['KeyW'] || keys['KeyS'] || keys['KeyA'] || keys['KeyD'];
+                const isMoving = keys['KeyE'] || keys['KeyS'] || keys['KeyQ'] || keys['KeyC'];
                 const onGround = playerGroup.position.y <= 0.01;
-
-                if (!onGround) fadeTo(3);
-                else if (isMoving) fadeTo(1);
-                else fadeTo(0);
-
                 const moveSpeed = 0.15;
-                if (keys['KeyW']) { playerGroup.position.x -= Math.sin(cameraYaw) * moveSpeed; playerGroup.position.z -= Math.cos(cameraYaw) * moveSpeed; }
-                if (keys['KeyS']) { playerGroup.position.x += Math.sin(cameraYaw) * moveSpeed; playerGroup.position.z += Math.cos(cameraYaw) * moveSpeed; }
-                if (keys['KeyA']) { playerGroup.position.x -= Math.cos(cameraYaw) * moveSpeed; playerGroup.position.z += Math.sin(cameraYaw) * moveSpeed; }
-                if (keys['KeyD']) { playerGroup.position.x += Math.cos(cameraYaw) * moveSpeed; playerGroup.position.z -= Math.sin(cameraYaw) * moveSpeed; }
+
+                // --- モーション自動判定 ---
+                if (!onGround) {
+                    fadeTo(3); // 空中にいればジャンプ（3番と想定）
+                } else if (isMoving) {
+                    fadeTo(1); // 動いていれば歩き（1番と想定）
+                } else {
+                    fadeTo(0); // 止まっていれば待機（0番と想定）
+                }
+
+                // 移動
+                if (keys['KeyE']) {
+                    playerGroup.position.x -= Math.sin(cameraYaw) * moveSpeed;
+                    playerGroup.position.z -= Math.cos(cameraYaw) * moveSpeed;
+                }
+                if (keys['KeyS']) {
+                    playerGroup.position.x += Math.sin(cameraYaw) * moveSpeed;
+                    playerGroup.position.z += Math.cos(cameraYaw) * moveSpeed;
+                }
+                if (keys['KeyQ']) {
+                    playerGroup.position.x -= Math.cos(cameraYaw) * moveSpeed;
+                    playerGroup.position.z += Math.sin(cameraYaw) * moveSpeed;
+                }
+                if (keys['KeyC']) {
+                    playerGroup.position.x += Math.cos(cameraYaw) * moveSpeed;
+                    playerGroup.position.z -= Math.sin(cameraYaw) * moveSpeed;
+                }
 
                 velocityY -= 0.012;
                 playerGroup.position.y += velocityY;
                 if (playerGroup.position.y < 0) { playerGroup.position.y = 0; velocityY = 0; }
                 if (keys['Space'] && onGround) velocityY = 0.25;
 
+                // 視点追従
                 let diff = cameraYaw - modelYaw;
                 while (diff < -Math.PI) diff += Math.PI * 2;
                 while (diff > Math.PI) diff -= Math.PI * 2;
-                if (isMoving) modelYaw += diff * 0.15;
+                if (isMoving) {
+                    modelYaw += diff * 0.15;
+                } else if (Math.abs(diff) > Math.PI/2.5) {
+                    modelYaw += Math.sign(diff) * (Math.abs(diff) - Math.PI/2.5) * 0.1;
+                }
                 modelContainer.rotation.y = modelYaw;
             }
 
@@ -137,7 +160,8 @@
             const quat = new THREE.Quaternion().setFromEuler(new THREE.Euler(cameraPitch, cameraYaw, 0, 'YXZ'));
             offset.applyQuaternion(quat);
             camera.position.copy(playerGroup.position).add(offset);
-            camera.lookAt(playerGroup.position.x, playerGroup.position.y + 1.8, playerGroup.position.z);
+            camera.lookAt(playerGroup.position.clone().add(new THREE.Vector3(0, 1.8, 0)));
+
             renderer.render(scene, camera);
         }
         animate();
