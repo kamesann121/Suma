@@ -2,29 +2,16 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title新しいタブ</title>
+    <title>新しいタブ</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; }
         #crosshair { position: absolute; top: 50%; left: 50%; width: 12px; height: 12px; border: 2px solid white; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none; z-index: 10; }
-        /* デバッグ表示用のスタイル */
-        #debug { 
-            position: absolute; 
-            top: 10px; 
-            left: 10px; 
-            color: #0f0; 
-            background: rgba(0,0,0,0.7); 
-            padding: 10px; 
-            font-family: monospace; 
-            font-size: 14px; 
-            z-index: 20; 
-            pointer-events: none;
-            border: 1px solid #0f0;
-        }
+        #debug { position: absolute; top: 10px; left: 10px; color: #0f0; background: rgba(0,0,0,0.7); padding: 10px; font-family: monospace; font-size: 14px; z-index: 20; pointer-events: none; border: 1px solid #0f0; }
     </style>
 </head>
 <body>
     <div id="crosshair"></div>
-    <div id="debug">Loading animations...</div>
+    <div id="debug">Loading files...</div>
 
     <script type="importmap">
     {
@@ -39,6 +26,7 @@
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
         import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
+        import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 
         const debugElement = document.getElementById('debug');
         const scene = new THREE.Scene();
@@ -70,42 +58,51 @@
 
         const gltfLoader = new GLTFLoader();
         gltfLoader.setDRACOLoader(dracoLoader);
+        const fbxLoader = new FBXLoader();
 
+        // 1. メインモデル(night.glb)をロード
         gltfLoader.load('./night.glb', (gltf) => {
             const playerModel = gltf.scene;
             playerModel.scale.set(1.5, 1.5, 1.5);
             playerModel.rotation.y = Math.PI; 
             modelContainer.add(playerModel);
 
+            mixer = new THREE.AnimationMixer(playerModel);
+            
+            // GLB内のアニメーションを 'walk' として登録
             if (gltf.animations.length > 0) {
-                mixer = new THREE.AnimationMixer(playerModel);
-                
-                // 全てのアニメーションを登録し、名前をデバッグ用に保存
-                let infoText = "Available Animations:<br>";
-                gltf.animations.forEach((clip, index) => {
-                    actions[index] = mixer.clipAction(clip);
-                    actions[index].name = clip.name; // 名前をアクションオブジェクトに保持
-                    infoText += `[${index}] ${clip.name}<br>`;
-                });
-                debugElement.innerHTML = infoText + "<hr>Current: [0]";
-
-                currentAction = actions[0];
-                if (currentAction) currentAction.play();
-            } else {
-                debugElement.innerHTML = "No animations found in this model.";
+                actions['walk'] = mixer.clipAction(gltf.animations[0]);
             }
+
+            // 2. 待機モーション(idle.fbx)をロード
+            fbxLoader.load('./idle.fbx', (fbx) => {
+                if (fbx.animations.length > 0) {
+                    // FBXのアニメーションをGLBのモデルに適用
+                    actions['idle'] = mixer.clipAction(fbx.animations[0]);
+                    
+                    // 最初は待機状態からスタート
+                    currentAction = actions['idle'];
+                    currentAction.play();
+                    debugElement.innerHTML = "Files loaded.<br>Current: [idle]";
+                } else {
+                    debugElement.innerHTML = "FBX loaded but no animation found.";
+                }
+            }, undefined, (err) => {
+                debugElement.innerHTML = "Error loading FBX: " + err.message;
+            });
+
+        }, undefined, (err) => {
+            debugElement.innerHTML = "Error loading GLB: " + err.message;
         });
 
-        function fadeTo(index) {
-            const nextAction = actions[index];
+        function fadeTo(name) {
+            const nextAction = actions[name];
             if (!nextAction || currentAction === nextAction) return;
             
-            // 画面の「Current」表示を更新
-            const currentLine = debugElement.innerHTML.split('<hr>')[0];
-            debugElement.innerHTML = currentLine + `<hr>Current: [${index}] ${nextAction.name}`;
+            debugElement.innerHTML = `Current: [${name}]`;
             
             nextAction.reset().fadeIn(0.2).play();
-            currentAction.fadeOut(0.2);
+            if (currentAction) currentAction.fadeOut(0.2);
             currentAction = nextAction;
         }
 
@@ -130,19 +127,18 @@
             if (mixer) mixer.update(delta);
 
             if (document.pointerLockElement === document.body) {
-                // キー判定（元のコードの E, S, Q, C を維持）
                 const isMoving = keys['KeyE'] || keys['KeyS'] || keys['KeyQ'] || keys['KeyC'];
                 const onGround = playerGroup.position.y <= 0.01;
                 const moveSpeed = 0.15;
 
-                // --- アニメーション切り替え ---
-                // ここの数字(0, 1, 3)がモデルと合っていない可能性が高いです
+                // --- アニメーション切り替えロジック ---
                 if (!onGround) {
-                    fadeTo(3); 
+                    // ジャンプがないので一旦walk（必要なら'idle'に変更）
+                    fadeTo('walk'); 
                 } else if (isMoving) {
-                    fadeTo(1); 
+                    fadeTo('walk'); 
                 } else {
-                    fadeTo(0); 
+                    fadeTo('idle'); 
                 }
 
                 if (keys['KeyE']) {
