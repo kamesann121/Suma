@@ -65,7 +65,7 @@
             mixer = new THREE.AnimationMixer(model);
 
             // 2. アニメーション（Rig）の読み込み
-            loader.load('./Rig.glb', (animGltf) => {
+            loader.load('./UAL1_Standard.glb', (animGltf) => {
                 if (animGltf.animations && animGltf.animations.length > 0) {
                     
                     animGltf.animations.forEach((clip, i) => {
