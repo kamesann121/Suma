@@ -29,8 +29,8 @@ const loader = new GLTFLoader();
 
 // --- 3Dモデル読み込み ---
 // 注意：ファイル名は正確に一致させてください
-const modelPath = './public/Mannequin_Medium.glb';
-const animPath = './public/UAL2_Standard.glb';
+const modelPath = 'public/Mannequin_Medium.glb';
+const animPath = 'public/UAL2_Standard.glb';
 
 loader.load(modelPath, (gltf) => {
     const model = gltf.scene;
