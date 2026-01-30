@@ -3,9 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>3D Debug Mode</title>
+    <title>3D Complete One-File</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #111; font-family: sans-serif; }
+        body { margin: 0; overflow: hidden; background: #111; font-family: sans-serif; color: white; }
         #debug-log {
             position: fixed; top: 10px; left: 10px; width: 60%; max-height: 40vh;
             background: rgba(0,0,0,0.8); color: #0f0; font-size: 10px;
@@ -13,8 +13,7 @@
         }
         #anim-list {
             position: fixed; top: 10px; right: 10px; width: 35%;
-            background: rgba(255,255,255,0.1); color: white;
-            padding: 5px; z-index: 1000;
+            background: rgba(255,255,255,0.1); padding: 5px; z-index: 1000;
         }
         .anim-btn {
             display: block; width: 100%; margin-bottom: 5px; padding: 10px 2px;
@@ -23,9 +22,82 @@
     </style>
 </head>
 <body>
-    <div id="debug-log">Log: Waiting for JS...</div>
+    <div id="debug-log">Log: HTML Loaded. Waiting for JS...</div>
     <div id="anim-list">Anim List:</div>
 
-    <script type="module" src="./main.js"></script>
+    <script type="module">
+        import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+        import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js';
+
+        const logEl = document.getElementById('debug-log');
+        const animListEl = document.getElementById('anim-list');
+
+        function debug(msg, isError = false) {
+            const div = document.createElement('div');
+            div.style.color = isError ? '#ff4444' : '#0f0';
+            div.innerText = `> ${msg}`;
+            logEl.appendChild(div);
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+
+        // 実行開始
+        debug("JS Module Execution Started");
+
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x222222);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 2, 5);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        document.body.appendChild(renderer.domElement);
+
+        const light = new THREE.AmbientLight(0xffffff, 2);
+        scene.add(light);
+
+        let mixer;
+        const loader = new GLTFLoader();
+
+        debug("Loading Model: public/Mannequin_Medium.glb");
+
+        loader.load('./public/Mannequin_Medium.glb', (gltf) => {
+            scene.add(gltf.scene);
+            debug("SUCCESS: Model Displayed");
+
+            loader.load('./public/UAL2_Standard.glb', (animGltf) => {
+                debug(`SUCCESS: ${animGltf.animations.length} Anims Found`);
+                mixer = new THREE.AnimationMixer(gltf.scene);
+
+                animGltf.animations.forEach((clip) => {
+                    const btn = document.createElement('button');
+                    btn.className = 'anim-btn';
+                    btn.innerText = clip.name;
+                    btn.onclick = () => {
+                        mixer.stopAllAction();
+                        mixer.clipAction(clip).play();
+                        debug(`Play: ${clip.name}`);
+                    };
+                    animListEl.appendChild(btn);
+                });
+            }, undefined, (e) => debug("ANIM ERROR: " + e.message, true));
+
+        }, undefined, (e) => debug("MODEL ERROR: Check public/ folder", true));
+
+        const clock = new THREE.Clock();
+        function animate() {
+            requestAnimationFrame(animate);
+            if (mixer) mixer.update(clock.getDelta());
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
 </body>
 </html>
