@@ -3,9 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>3D Debug iPhone OK</title>
-    <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
-    <script src="https://unpkg.com/three@0.160.0/examples/js/loaders/GLTFLoader.js"></script>
+    <title>3D Debug iPhone Final</title>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/loaders/GLTFLoader.js"></script>
     <style>
         body { margin: 0; overflow: hidden; background: #111; font-family: sans-serif; color: white; }
         #debug-log {
@@ -39,73 +39,78 @@
             logEl.scrollTop = logEl.scrollHeight;
         }
 
-        debug("Starting JavaScript...");
+        // ページが完全に読み込まれてから開始する（iPhone対策）
+        window.onload = function() {
+            debug("Page Loaded. Starting JS...");
 
-        try {
-            // シーン設定
-            const scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x222222);
+            try {
+                // 1. Loaderの存在確認
+                let loader;
+                if (typeof THREE.GLTFLoader === 'function') {
+                    loader = new THREE.GLTFLoader();
+                    debug("THREE.GLTFLoader Found.");
+                } else if (typeof GLTFLoader === 'function') {
+                    loader = new GLTFLoader();
+                    debug("Global GLTFLoader Found.");
+                } else {
+                    throw new Error("GLTFLoader not found in any scope.");
+                }
 
-            const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-            camera.position.set(0, 2, 5);
+                // --- Scene Setup ---
+                const scene = new THREE.Scene();
+                scene.background = new THREE.Color(0x222222);
 
-            const renderer = new THREE.WebGLRenderer({ antialias: true });
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(window.devicePixelRatio);
-            document.body.appendChild(renderer.domElement);
+                const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+                camera.position.set(0, 2, 5);
 
-            const light = new THREE.AmbientLight(0xffffff, 2);
-            scene.add(light);
-            const dLight = new THREE.DirectionalLight(0xffffff, 1);
-            dLight.position.set(1, 1, 1);
-            scene.add(dLight);
+                const renderer = new THREE.WebGLRenderer({ antialias: true });
+                renderer.setSize(window.innerWidth, window.innerHeight);
+                renderer.setPixelRatio(window.devicePixelRatio);
+                document.body.appendChild(renderer.domElement);
 
-            let mixer;
+                scene.add(new THREE.AmbientLight(0xffffff, 2));
 
-            // --- ここが修正ポイント ---
-            // Scriptタグで読み込んだ場合、GLTFLoader は THREE の中ではなく、単独の global 変数になっていることがあります
-            const loader = new THREE.GLTFLoader(); 
-            // もしこれでもダメなら、ここを new GLTFLoader() (THREEなし) に自動切替する
-            
-            debug("Loading Model...");
+                let mixer;
+                debug("Loading: public/Mannequin_Medium.glb");
 
-            loader.load('./public/Mannequin_Medium.glb', function(gltf) {
-                scene.add(gltf.scene);
-                debug("SUCCESS: Model Loaded");
+                loader.load('./public/Mannequin_Medium.glb', function(gltf) {
+                    scene.add(gltf.scene);
+                    debug("SUCCESS: Model Loaded");
 
-                loader.load('./public/UAL2_Standard.glb', function(animGltf) {
-                    debug("SUCCESS: Anims Found (" + animGltf.animations.length + ")");
-                    mixer = new THREE.AnimationMixer(gltf.scene);
+                    loader.load('./public/UAL2_Standard.glb', function(animGltf) {
+                        debug("SUCCESS: Anims Found (" + animGltf.animations.length + ")");
+                        mixer = new THREE.AnimationMixer(gltf.scene);
 
-                    animGltf.animations.forEach(function(clip) {
-                        const btn = document.createElement('button');
-                        btn.className = 'anim-btn';
-                        btn.innerText = clip.name;
-                        btn.onclick = function() {
-                            mixer.stopAllAction();
-                            mixer.clipAction(clip).play();
-                            debug("Playing: " + clip.name);
-                        };
-                        animListEl.appendChild(btn);
-                    });
-                }, undefined, function(e) { debug("Anim Load Error", true); });
+                        animGltf.animations.forEach(function(clip) {
+                            const btn = document.createElement('button');
+                            btn.className = 'anim-btn';
+                            btn.innerText = clip.name;
+                            btn.onclick = function() {
+                                mixer.stopAllAction();
+                                mixer.clipAction(clip).play();
+                                debug("Play: " + clip.name);
+                            };
+                            animListEl.appendChild(btn);
+                        });
+                    }, undefined, function(e) { debug("Anim Load Error", true); });
 
-            }, undefined, function(e) { 
-                debug("Model Load Error. Path: ./public/Mannequin_Medium.glb", true); 
-            });
+                }, undefined, function(e) { 
+                    debug("Model Load Error. Check path/filename.", true); 
+                });
 
-            const clock = new THREE.Clock();
-            function animate() {
-                requestAnimationFrame(animate);
-                if (mixer) mixer.update(clock.getDelta());
-                renderer.render(scene, camera);
+                const clock = new THREE.Clock();
+                function animate() {
+                    requestAnimationFrame(animate);
+                    if (mixer) mixer.update(clock.getDelta());
+                    renderer.render(scene, camera);
+                }
+                animate();
+                debug("Render Loop Active.");
+
+            } catch (err) {
+                debug("Critical Error: " + err.message, true);
             }
-            animate();
-            debug("Render Loop Active");
-
-        } catch (err) {
-            debug("Critical Error: " + err.message, true);
-        }
+        };
     </script>
 </body>
 </html>
