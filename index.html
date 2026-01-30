@@ -3,32 +3,22 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>3D Integration</title>
+    <title>3D Integration Fix</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/loaders/GLTFLoader.js"></script>
     <style>
         body { margin: 0; overflow: hidden; background: #111; font-family: sans-serif; color: white; }
         #debug-log {
-            position: fixed; top: 10px; left: 10px; width: 80%; max-height: 40vh;
+            position: fixed; top: 10px; left: 10px; width: 85%; max-height: 40vh;
             background: rgba(0,0,0,0.8); color: #0f0; font-size: 11px;
             padding: 8px; overflow-y: auto; z-index: 1000; border: 1px solid #333;
         }
     </style>
 </head>
 <body>
-    <div id="debug-log">Log: Initializing...</div>
+    <div id="debug-log">Log: Waiting for script...</div>
 
-    <script type="importmap">
-    {
-        "imports": {
-            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
-        }
-    }
-    </script>
-
-    <script type="module">
-        import * as THREE from 'three';
-        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-
+    <script>
         const logEl = document.getElementById('debug-log');
         function debug(msg, isError = false) {
             const div = document.createElement('div');
@@ -38,59 +28,62 @@
             logEl.scrollTop = logEl.scrollHeight;
         }
 
-        debug("JS Module Loaded.");
+        debug("Script started.");
 
-        try {
-            // シーン設定
-            const scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x333333);
-            const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-            camera.position.set(0, 2, 5);
-            const renderer = new THREE.WebGLRenderer({ antialias: true });
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(window.devicePixelRatio);
-            document.body.appendChild(renderer.domElement);
+        window.onload = function() {
+            try {
+                // iPhoneでも確実にLoaderを見つけるためのチェック
+                if (typeof THREE.GLTFLoader === 'undefined') {
+                    throw new Error("GLTFLoader still missing. Using fallback...");
+                }
 
-            scene.add(new THREE.AmbientLight(0xffffff, 2));
+                const scene = new THREE.Scene();
+                scene.background = new THREE.Color(0x333333);
+                const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+                camera.position.set(0, 2, 5);
+                const renderer = new THREE.WebGLRenderer({ antialias: true });
+                renderer.setSize(window.innerWidth, window.innerHeight);
+                document.body.appendChild(renderer.domElement);
 
-            const loader = new GLTFLoader();
-            let mixer;
+                scene.add(new THREE.AmbientLight(0xffffff, 2));
 
-            // 統合のテスト：キャラとアニメを別々に読み込んで合体させる
-            debug("Loading Character...");
-            loader.load('public/Mannequin_Medium.glb', (gltf) => {
-                const model = gltf.scene;
-                scene.add(model);
-                debug("SUCCESS: Character OK");
+                const loader = new THREE.GLTFLoader();
+                let mixer;
 
-                debug("Loading Animation...");
-                loader.load('public/UAL2_Standard.glb', (animGltf) => {
-                    mixer = new THREE.AnimationMixer(model);
-                    
-                    // アニメーションを流し込む
-                    if (animGltf.animations.length > 0) {
-                        const action = mixer.clipAction(animGltf.animations[0]);
-                        action.play();
-                        debug("SUCCESS: Animation Integrated!");
-                    } else {
-                        debug("WARNING: No anims in file", true);
-                    }
-                }, undefined, (e) => debug("Anim Error: " + e.message, true));
+                debug("1. Loading Character Model...");
+                // パスはGitHubの構造に合わせて './public/'
+                loader.load('./public/Mannequin_Medium.glb', function(gltf) {
+                    const model = gltf.scene;
+                    scene.add(model);
+                    debug("SUCCESS: Character OK");
 
-            }, undefined, (e) => debug("Model Error: " + e.message, true));
+                    debug("2. Loading Animation Data...");
+                    loader.load('./public/UAL2_Standard.glb', function(animGltf) {
+                        mixer = new THREE.AnimationMixer(model);
+                        if (animGltf.animations.length > 0) {
+                            const action = mixer.clipAction(animGltf.animations[0]);
+                            action.play();
+                            debug("SUCCESS: INTEGRATED & PLAYING!");
+                        }
+                    }, undefined, function(e) { debug("Anim File Error", true); });
 
-            const clock = new THREE.Clock();
-            function animate() {
-                requestAnimationFrame(animate);
-                if (mixer) mixer.update(clock.getDelta());
-                renderer.render(scene, camera);
+                }, undefined, function(e) { 
+                    debug("Model File Not Found at ./public/", true); 
+                });
+
+                const clock = new THREE.Clock();
+                function animate() {
+                    requestAnimationFrame(animate);
+                    if (mixer) mixer.update(clock.getDelta());
+                    renderer.render(scene, camera);
+                }
+                animate();
+                debug("Loop running.");
+
+            } catch (e) {
+                debug("ERROR: " + e.message, true);
             }
-            animate();
-            debug("Render Loop Started.");
-
-        } catch (e) {
-            debug("Critical Error: " + e.message, true);
-        }
+        };
     </script>
 </body>
 </html>
