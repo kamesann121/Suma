@@ -5,13 +5,34 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>新しいタブ</title>
     <style>
-        body { margin: 0; background-color: #eee; }
+        body { 
+            margin: 0; 
+            background-color: #333; 
+            overflow: hidden; 
+            font-family: sans-serif;
+        }
         canvas { display: block; }
-        #info { position: absolute; top: 10px; left: 10px; background: rgba(255,255,255,0.8); padding: 10px; border-radius: 5px; font-family: sans-serif; }
+        #info { 
+            position: absolute; 
+            top: 10px; 
+            left: 10px; 
+            background: rgba(0, 0, 0, 0.7); 
+            color: white; 
+            padding: 15px; 
+            border-radius: 8px; 
+            pointer-events: none;
+            font-size: 14px;
+            line-height: 1.5;
+        }
     </style>
 </head>
 <body>
-    <div id="info">モデル読み込み中...</div>
+    <div id="info">
+        <b>FBX Animation Loader</b><br>
+        モデル読み込み中...<br>
+        <small>※Mixamoでリグ統一済みのファイルを使用</small>
+    </div>
+
     <script type="importmap">
         {
             "imports": {
@@ -20,6 +41,9 @@
             }
         }
     </script>
+
+    <script src="https://cdn.jsdelivr.net/npm/fflate@0.8.0/lib/browser.min.js"></script>
+
     <script type="module" src="main.js"></script>
 </body>
 </html>
