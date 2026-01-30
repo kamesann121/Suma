@@ -15,13 +15,13 @@
     </style>
 </head>
 <body>
-    <div id="debug">Connecting Body and Rig...</div>
+    <div id="debug">Loading Model...</div>
 
     <script type="importmap">
     {
         "imports": { 
-            "three": "https://unpkg.com/three@0.160.0/build/three.module.js", 
-            "three/examples/jsm/": "https://unpkg.com/three@0.160.0/examples/jsm/" 
+            "three": "https://unpkg.com", 
+            "three/examples/jsm/": "https://unpkg.com" 
         }
     }
     </script>
@@ -56,53 +56,56 @@
         const clock = new THREE.Clock();
         const loader = new GLTFLoader();
 
-        // 1. 本体の読み込み
-        loader.load('./Mannequin.glb', (gltf) => {
+        // 1つのファイル（UAL1_Standard.glb）だけを読み込むように変更
+        const MODEL_PATH = './UAL1_Standard.glb';
+
+        loader.load(MODEL_PATH, (gltf) => {
             const model = gltf.scene;
             modelContainer.add(model);
             model.rotation.y = Math.PI;
 
             mixer = new THREE.AnimationMixer(model);
 
-            // 2. アニメーション（Rig）の読み込み
-            loader.load('./UAL1_Standard.glb', (animGltf) => {
-                if (animGltf.animations && animGltf.animations.length > 0) {
-                    
-                    animGltf.animations.forEach((clip, i) => {
-                        // 【魔法の処理】Rig側の骨の階層名を消して、Mannequinの骨に届くようにする
-                        clip.tracks.forEach(track => {
-                            track.name = track.name.replace(/[^\.]+\//g, ''); 
-                        });
-
-                        const action = mixer.clipAction(clip);
-                        const name = clip.name.toLowerCase();
-                        
-                        // 名前で割り振り（Rig.glbの中に複数の動きがある場合）
-                        if (name.includes('idle')) actions['idle'] = action;
-                        if (name.includes('walk')) actions['walk'] = action;
-                        
-                        // インデックスでも保持（保険）
-                        actions[i] = action;
+            if (gltf.animations && gltf.animations.length > 0) {
+                gltf.animations.forEach((clip, i) => {
+                    // 骨の名前を正規化（もし必要なら）
+                    clip.tracks.forEach(track => {
+                        track.name = track.name.replace(/[^\.]+\//g, ''); 
                     });
 
-                    // 割り当ての最終確定
-                    if (!actions['idle']) actions['idle'] = actions[0];
-                    if (!actions['walk']) actions['walk'] = actions[1] || actions[0];
-
-                    if (actions['idle']) {
-                        currentAction = actions['idle'];
-                        currentAction.play();
-                    }
+                    const action = mixer.clipAction(clip);
+                    const name = clip.name.toLowerCase();
                     
-                    debugElement.innerHTML = `
-                        <b>[System Active]</b><br>
-                        Body: Mannequin.glb<br>
-                        Motion: Rig.glb (${animGltf.animations.length} clips)<br>
-                        <hr>Status: Walking Ready!<br>Use E,S,Q,C
-                    `;
-                }
-            }, undefined, (err) => debugElement.innerHTML = "Rig.glb missing!");
-        }, undefined, (err) => debugElement.innerHTML = "Mannequin.glb missing!");
+                    // 名前で振り分け
+                    if (name.includes('idle')) actions['idle'] = action;
+                    else if (name.includes('walk')) actions['walk'] = action;
+                    
+                    // インデックスでも保持
+                    actions[i] = action;
+                });
+
+                // デフォルトの再生設定
+                currentAction = actions['idle'] || actions[0];
+                if (currentAction) currentAction.play();
+
+                debugElement.innerHTML = `
+                    <b>[Model Loaded]</b><br>
+                    File: ${MODEL_PATH}<br>
+                    Animations: ${gltf.animations.length} clips found.<br>
+                    <hr>Status: Ready!<br>Use E,S,Q,C to Move
+                `;
+            } else {
+                debugElement.innerHTML = "<b>[Warning]</b> No animations found in GLB.";
+            }
+        }, 
+        (xhr) => {
+            const percent = Math.round(xhr.loaded / xhr.total * 100);
+            if (percent) debugElement.innerHTML = `Loading: ${percent}%`;
+        }, 
+        (err) => {
+            debugElement.innerHTML = `<b>[Error]</b><br>Failed to load GLB.<br>Check if file exists at: ${MODEL_PATH}`;
+            console.error(err);
+        });
 
         function fadeTo(name) {
             const next = actions[name];
@@ -112,7 +115,7 @@
             currentAction = next;
         }
 
-        // --- 操作系 ---
+        // --- 操作系（変更なし） ---
         let cameraYaw = 0, cameraPitch = 0, modelYaw = 0;
         const keys = {};
         document.addEventListener('click', () => document.body.requestPointerLock());
