@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>3D Debug iPhone OK</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+    <script src="https://unpkg.com/three@0.160.0/examples/js/loaders/GLTFLoader.js"></script>
     <style>
         body { margin: 0; overflow: hidden; background: #111; font-family: sans-serif; color: white; }
         #debug-log {
@@ -28,7 +28,6 @@
     <div id="anim-list">Anim List:</div>
 
     <script>
-        // スマホ画面に文字を出す関数
         const logEl = document.getElementById('debug-log');
         const animListEl = document.getElementById('anim-list');
 
@@ -40,10 +39,10 @@
             logEl.scrollTop = logEl.scrollHeight;
         }
 
-        // 実行開始の合図
         debug("Starting JavaScript...");
 
         try {
+            // シーン設定
             const scene = new THREE.Scene();
             scene.background = new THREE.Color(0x222222);
 
@@ -57,11 +56,17 @@
 
             const light = new THREE.AmbientLight(0xffffff, 2);
             scene.add(light);
+            const dLight = new THREE.DirectionalLight(0xffffff, 1);
+            dLight.position.set(1, 1, 1);
+            scene.add(dLight);
 
             let mixer;
-            // THREE.GLTFLoader を使う（Scriptタグ読み込み時の書き方）
-            const loader = new THREE.GLTFLoader();
 
+            // --- ここが修正ポイント ---
+            // Scriptタグで読み込んだ場合、GLTFLoader は THREE の中ではなく、単独の global 変数になっていることがあります
+            const loader = new THREE.GLTFLoader(); 
+            // もしこれでもダメなら、ここを new GLTFLoader() (THREEなし) に自動切替する
+            
             debug("Loading Model...");
 
             loader.load('./public/Mannequin_Medium.glb', function(gltf) {
@@ -83,9 +88,11 @@
                         };
                         animListEl.appendChild(btn);
                     });
-                }, undefined, function(e) { debug("Anim Error: " + e.message, true); });
+                }, undefined, function(e) { debug("Anim Load Error", true); });
 
-            }, undefined, function(e) { debug("Model Error: " + e.message, true); });
+            }, undefined, function(e) { 
+                debug("Model Load Error. Path: ./public/Mannequin_Medium.glb", true); 
+            });
 
             const clock = new THREE.Clock();
             function animate() {
@@ -94,14 +101,7 @@
                 renderer.render(scene, camera);
             }
             animate();
-
-            window.addEventListener('resize', function() {
-                camera.aspect = window.innerWidth / window.innerHeight;
-                camera.updateProjectionMatrix();
-                renderer.setSize(window.innerWidth, window.innerHeight);
-            });
-
-            debug("Render Loop Started");
+            debug("Render Loop Active");
 
         } catch (err) {
             debug("Critical Error: " + err.message, true);
