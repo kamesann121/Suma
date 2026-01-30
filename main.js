@@ -1,105 +1,93 @@
-import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import nipplejs from 'nipplejs';
+// 1. スマホで読み込みを確認するためのアラート
+alert("JSの読み込みを開始しました！");
 
-// --- シーン・カメラ・レンダラーの設定 ---
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js';
+
+// --- デバッグログ出力関数 ---
+const logEl = document.getElementById('debug-log');
+const animListEl = document.getElementById('anim-list');
+
+function debug(msg, isError = false) {
+    console.log(msg);
+    if (!logEl) return;
+    const div = document.createElement('div');
+    div.style.color = isError ? '#ff4444' : '#0f0';
+    div.style.borderBottom = '1px solid #333';
+    div.style.padding = '2px 0';
+    div.innerText = `> ${msg}`;
+    logEl.appendChild(div);
+    logEl.scrollTop = logEl.scrollHeight;
+}
+
+debug("Three.js Modules Loaded");
+
+// --- 3D基本設定 ---
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x333333); // 背景を少し暗いグレーに（モデルを見やすく）
+scene.background = new THREE.Color(0x222222);
 
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-camera.position.set(0, 3, 7); // カメラを少し後ろに引く
-camera.lookAt(0, 1, 0);
+camera.position.set(0, 2, 5);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(window.devicePixelRatio); // スマホでのぼやけ防止
+renderer.setPixelRatio(window.devicePixelRatio);
 document.body.appendChild(renderer.domElement);
 
-// --- ライト（明るくする） ---
-const hLight = new THREE.HemisphereLight(0xffffff, 0x444444, 3);
-scene.add(hLight);
-const dLight = new THREE.DirectionalLight(0xffffff, 1);
-dLight.position.set(5, 5, 5);
-scene.add(dLight);
+const light = new THREE.AmbientLight(0xffffff, 2);
+scene.add(light);
 
-// --- 変数管理 ---
-let mixer, currentAction, isMoving = false;
-const actions = {};
+let mixer;
 const loader = new GLTFLoader();
 
-// --- 3Dモデル読み込み ---
-// 注意：ファイル名は正確に一致させてください
-const modelPath = 'public/Mannequin_Medium.glb';
-const animPath = 'public/UAL2_Standard.glb';
+// --- モデル読み込み開始 ---
+debug("Loading: Mannequin_Medium.glb...");
 
-loader.load(modelPath, (gltf) => {
-    const model = gltf.scene;
-    scene.add(model);
-    console.log("キャラモデルの読み込みに成功しました");
+loader.load('./public/Mannequin_Medium.glb', (gltf) => {
+    scene.add(gltf.scene);
+    debug("SUCCESS: Model Loaded");
 
-    // アニメーション用ファイルを読み込み
-    loader.load(animPath, (animGltf) => {
-        mixer = new THREE.AnimationMixer(model);
+    debug("Loading: UAL2_Standard.glb...");
+    loader.load('./public/UAL2_Standard.glb', (animGltf) => {
+        debug(`SUCCESS: ${animGltf.animations.length} Anims Found`);
         
+        mixer = new THREE.AnimationMixer(gltf.scene);
+
+        // アニメーションボタンの作成
         animGltf.animations.forEach((clip) => {
-            // Quaterniusさんのパック内の名前に合わせて登録
-            // もし動かない場合は 'Walking' を 'walk' などに書き換えが必要な場合があります
-            actions[clip.name] = mixer.clipAction(clip);
+            const btn = document.createElement('button');
+            btn.className = 'anim-btn';
+            btn.innerText = clip.name;
+            btn.onclick = () => {
+                mixer.stopAllAction();
+                mixer.clipAction(clip).play();
+                debug(`Play: ${clip.name}`);
+            };
+            animListEl.appendChild(btn);
         });
 
-        // 待機状態を再生
-        if (actions['Idle']) {
-            currentAction = actions['Idle'];
-            currentAction.play();
-        } else {
-            // Idleがない場合、最初のアニメーションを再生
-            currentAction = mixer.clipAction(animGltf.animations[0]);
-            currentAction.play();
-        }
-        console.log("アニメーションの読み込みに成功しました");
-    }, undefined, (e) => console.error("アニメ読み込みエラー:", e));
+        debug("ALL READY: Tap buttons on the right");
 
-}, undefined, (e) => {
-    alert("モデル読み込みエラー！パスを確認してください: " + modelPath);
-    console.error(e);
+    }, undefined, (err) => {
+        debug("ANIM ERROR: " + err.message, true);
+    });
+
+}, undefined, (err) => {
+    debug("MODEL ERROR: Check file name/path", true);
+    debug("Path tried: ./public/Mannequin_Medium.glb", true);
 });
 
-// --- スマホ用ジョイスティックの設定 ---
-const joystick = nipplejs.create({
-    zone: document.getElementById('joystick-zone'),
-    mode: 'static',
-    position: { left: '80px', bottom: '80px' },
-    color: 'white',
-    size: 120
-});
-
-joystick.on('move', () => { isMoving = true; });
-joystick.on('end', () => { isMoving = false; });
-
-// --- 更新ループ ---
+// --- アニメーションループ ---
 const clock = new THREE.Clock();
-
 function animate() {
     requestAnimationFrame(animate);
     const delta = clock.getDelta();
-
-    if (mixer) {
-        mixer.update(delta);
-
-        // アニメーション切り替え（IdleとWalkingは実際のファイル内の名前に合わせてください）
-        const nextAction = isMoving ? (actions['Walking'] || actions['Walk']) : (actions['Idle'] || actions['idle']);
-        
-        if (nextAction && currentAction !== nextAction) {
-            currentAction.fadeOut(0.2);
-            nextAction.reset().fadeIn(0.2).play();
-            currentAction = nextAction;
-        }
-    }
+    if (mixer) mixer.update(delta);
     renderer.render(scene, camera);
 }
 animate();
 
-// 画面のリサイズ対応
+// リサイズ対応
 window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
