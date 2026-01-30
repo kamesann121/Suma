@@ -21,12 +21,11 @@ const uiContainer = document.createElement('div');
 uiContainer.style.cssText = 'position:absolute; top:50px; left:10px; display:flex; flex-direction:column; gap:2px; max-height:80vh; overflow-y:auto; z-index:100;';
 document.body.appendChild(uiContainer);
 
-// --- 強化されたボーン名対応表 ---
-const BONE_MAP = {
+// 柔軟なボーンマッピング用キーワード辞書
+const KEYWORD_MAP = {
+    "spine": "body",
     "pelvis": "body",
-    "spine_01": "body",
-    "spine_02": "body",
-    "neck_01": "head",
+    "neck": "head",
     "head": "head",
     "upperarm_l": "arm.l",
     "lowerarm_l": "forearm.l",
@@ -48,11 +47,6 @@ async function init() {
         const model = charData.scene;
         scene.add(model);
 
-        // モデル側の実際のボーン名をリスト化してデバッグ用に表示
-        const realBoneNames = [];
-        model.traverse(n => { if(n.isBone) realBoneNames.push(n.name); });
-        console.log("モデルの実際のボーン名:", realBoneNames);
-
         const animData = await loader.loadAsync('./UAL1_Standard.glb');
         mixer = new THREE.AnimationMixer(model);
 
@@ -63,26 +57,38 @@ async function init() {
                 mixer.stopAllAction();
                 const newClip = clip.clone();
                 
-                newClip.tracks.forEach(track => {
-                    // 大文字小文字の揺れを吸収するために小文字で比較
-                    const trackNameLower = track.name.toLowerCase();
+                newClip.tracks = newClip.tracks.filter(track => {
+                    const trackParts = track.name.split('.');
+                    const rawBoneName = trackParts[0].toLowerCase(); // アニメ側のボーン名（小文字化）
+                    const property = trackParts[1]; // .quaternion 等
                     
-                    Object.keys(BONE_MAP).forEach(key => {
-                        if (trackNameLower.startsWith(key.toLowerCase())) {
-                            // 実際のモデルにあるボーン名に置換
-                            // .pos や .quat などの接尾辞を維持しつつ名前を書き換える
-                            const suffix = track.name.split('.')[1] || 'quaternion';
-                            track.name = BONE_MAP[key] + "." + suffix;
+                    let targetBoneName = null;
+
+                    // キーワードが含まれているかチェックして、Barbarian側の名前に変換
+                    for (const key in KEYWORD_MAP) {
+                        if (rawBoneName.includes(key)) {
+                            targetBoneName = KEYWORD_MAP[key];
+                            break;
                         }
-                    });
+                    }
+
+                    if (targetBoneName) {
+                        track.name = targetBoneName + "." + property;
+                        return true; // 変換できたものは残す
+                    }
+                    return false; // 変換できなかった不要なボーン（指など）は捨てる
                 });
 
-                mixer.clipAction(newClip).play();
-                document.getElementById('info').innerText = "再生中: " + clip.name;
+                if (newClip.tracks.length > 0) {
+                    mixer.clipAction(newClip).play();
+                    document.getElementById('info').innerText = "再生中: " + clip.name;
+                } else {
+                    document.getElementById('info').innerText = "有効なボーンが見つかりません";
+                }
             };
             uiContainer.appendChild(btn);
         });
-        document.getElementById('info').innerText = "読み込み完了。手足が動くか確認してください。";
+        document.getElementById('info').innerText = "読み込み完了。ボタンを押してください。";
     } catch (e) { console.error(e); }
 }
 
