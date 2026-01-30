@@ -17,7 +17,6 @@ const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(0, 1, 0);
 controls.update();
 
-// ライト設定
 scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 2));
 const dirLight = new THREE.DirectionalLight(0xffffff, 2);
 dirLight.position.set(5, 5, 5);
@@ -29,28 +28,29 @@ const clock = new THREE.Clock();
 
 async function init() {
     try {
-        // 1. 本体読み込み
-        const charData = await loader.loadAsync('./Barbarian_Mixamo.glb');
+        // --- ここをあなたの指定に合わせて修正 ---
+        // 本体は小文字の b
+        const charData = await loader.loadAsync('./b.glb');
         const model = charData.scene;
         scene.add(model);
 
-        // 2. 動き読み込み
-        const animData = await loader.loadAsync('./Animation_Mixamo.glb');
+        // 動きは大文字の A
+        const animData = await loader.loadAsync('./A.glb');
         
         mixer = new THREE.AnimationMixer(model);
 
         if (animData.animations.length > 0) {
-            // MixamoのGLBアニメーションを再生
             const action = mixer.clipAction(animData.animations[0]);
             action.play();
-            document.getElementById('info').innerText = "成功！全身アニメーション再生中";
+            document.getElementById('info').innerText = "成功！再生中";
         } else {
-            document.getElementById('info').innerText = "エラー: アニメーションデータが空です";
+            document.getElementById('info').innerText = "動きのデータが見つかりません";
         }
 
     } catch (error) {
         console.error(error);
-        document.getElementById('info').innerText = "エラー: ファイル名が違うか、アップロードされていません";
+        // エラーの理由を画面に表示
+        document.getElementById('info').innerText = "エラー原因: " + error.message;
     }
 }
 
