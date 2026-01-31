@@ -16,7 +16,7 @@
         #status { position: fixed; bottom: 20px; left: 20px; color: white; background: rgba(0,0,0,0.5); padding: 10px; border-radius: 5px; font-size: 14px; pointer-events: none; }
         #reticle {
             position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            width: 8px; height: 8px; border: 2px solid rgba(0, 255, 0, 0.8); /* 少し目立つ緑色に */
+            width: 8px; height: 8px; border: 2px solid rgba(0, 255, 0, 0.8);
             border-radius: 50%; pointer-events: none; z-index: 100;
         }
     </style>
@@ -178,10 +178,10 @@
                         model.position.y += (targetY - model.position.y) * 0.1;
                     }
 
-                    // --- TPSカメラ制御：バランス調整版 ---
-                    const camDist = 2.4;     // 2.0から少し引いて全体を見やすく
-                    const camSide = 1.1;     // 1.4から-0.3して1.1へ
-                    const camHeight = 1.5;   // 少し高めにして見下ろしやすく
+                    // --- TPSカメラ制御：再調整版 ---
+                    const camDist = 2.4;
+                    const camSide = 0.9;     // 1.1 から微調整して 0.9 へ
+                    const camHeight = 1.5;
 
                     const horizontalDist = camDist * Math.cos(cameraElevation);
                     const verticalDist = camDist * Math.sin(cameraElevation);
@@ -195,7 +195,7 @@
 
                     camera.position.set(camPosX, camPosY, camPosZ);
 
-                    const lookDistance = 20; // 視線をより遠くに
+                    const lookDistance = 20;
                     const lookTarget = new THREE.Vector3(
                         camPosX - Math.sin(cameraAzimuth) * lookDistance,
                         camPosY - Math.sin(cameraElevation) * lookDistance,
