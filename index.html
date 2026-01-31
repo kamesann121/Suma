@@ -13,23 +13,47 @@
             color: white; background: rgba(0,0,0,0.7); padding: 25px; border-radius: 12px;
             text-align: center; pointer-events: none; z-index: 200; font-weight: bold;
         }
-        #status { position: fixed; bottom: 20px; left: 20px; color: white; background: rgba(0,0,0,0.5); padding: 10px; border-radius: 5px; font-size: 14px; pointer-events: none; }
+        #status { position: fixed; bottom: 120px; left: 20px; color: white; background: rgba(0,0,0,0.5); padding: 10px; border-radius: 5px; font-size: 14px; pointer-events: none; }
         #reticle {
             position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
             width: 8px; height: 8px; border: 2px solid rgba(0, 255, 0, 0.8);
             border-radius: 50%; pointer-events: none; z-index: 100;
         }
+        #inventory {
+            position: fixed; bottom: 20px; right: 20px;
+            display: flex; gap: 10px; z-index: 300;
+        }
+        .slot {
+            width: 60px; height: 60px;
+            background: rgba(0, 0, 0, 0.6);
+            border: 2px solid #555;
+            border-radius: 8px;
+            display: flex; align-items: center; justify-content: center;
+            color: white; font-size: 10px; font-weight: bold;
+            position: relative;
+        }
+        .slot.active { border-color: #00ff00; background: rgba(0, 255, 0, 0.2); }
+        .slot::after { content: attr(data-key); position: absolute; top: 2px; left: 4px; color: #aaa; }
     </style>
 </head>
 <body>
-    <div id="overlay">CLICK TO START<br>(V: しゃがみ切替 / E,S,Q,C: 移動 / Space: Jump)</div>
-    <div id="status">Mode: Standing</div>
+    <div id="overlay">CLICK TO START<br>(1: 素手 / 2: ピストル / V: しゃがみ)</div>
+    <div id="status">Current: Bare Hands</div>
     <div id="reticle"></div>
 
+    <div id="inventory">
+        <div class="slot active" data-key="1" id="slot-1">素手</div>
+        <div class="slot" data-key="2" id="slot-2">ピストル</div>
+        <div class="slot" data-key="3" id="slot-3"></div>
+        <div class="slot" data-key="4" id="slot-4"></div>
+        <div class="slot" data-key="5" id="slot-5"></div>
+        <div class="slot" data-key="6" id="slot-6"></div>
+    </div>
+
     <script>
-        let scene, camera, renderer, clock, mixer, model;
+        let scene, camera, renderer, clock, mixer, model, gun;
         let moveState = { q: false, e: false, c: false, s: false };
-        let velocityY = 0, isJumping = false, canJump = true;
+        let currentEquip = 1; 
         let isCrouching = false;
         let actions = {}, currentAction;
         let cameraAzimuth = 0, cameraElevation = 0.2;
@@ -41,6 +65,16 @@
                 nextAction.reset().setEffectiveTimeScale(1).setEffectiveWeight(1).fadeIn(duration).play();
                 currentAction = nextAction;
             }
+        }
+
+        function updateInventoryUI(slotNum) {
+            document.querySelectorAll('.slot').forEach(s => s.classList.remove('active'));
+            document.getElementById(`slot-${slotNum}`).classList.add('active');
+            
+            const names = ["", "Bare Hands", "Pistol", "Empty", "Empty", "Empty", "Empty"];
+            document.getElementById('status').innerText = "Current: " + names[slotNum];
+
+            if (gun) gun.visible = (slotNum === 2);
         }
 
         window.onload = function() {
@@ -56,16 +90,39 @@
             scene.add(new THREE.HemisphereLight(0xffffff, 0x888888, 1.5));
             scene.add(new THREE.GridHelper(500, 100, 0x999999, 0xcccccc));
 
-            document.body.addEventListener('click', () => {
-                document.body.requestPointerLock();
-                document.getElementById('overlay').style.display = 'none';
+            const loader = new THREE.GLTFLoader();
+
+            // 1. Pistol.glb のロード
+            loader.load('./Pistol.glb', (gltf) => {
+                gun = gltf.scene;
+                // ここでピストルの大きさと向きを仮調整
+                gun.scale.set(0.1, 0.1, 0.1); 
+                gun.rotation.set(0, Math.PI / 2, 0); 
+                gun.visible = false; 
+                console.log("Pistol loaded. Adjust scale/rotation if it looks weird.");
             });
 
-            const loader = new THREE.GLTFLoader();
+            // 2. キャラクターのロード
             loader.load('./m.glb', (gltf) => {
                 model = gltf.scene;
                 scene.add(model);
                 mixer = new THREE.AnimationMixer(model);
+
+                // 右手のボーンにピストルをアタッチ
+                if (gun) {
+                    model.traverse((child) => {
+                        if (child.isBone) {
+                            const boneName = child.name.toLowerCase();
+                            // 一般的な「Hand」と「R」が含まれるボーンを探す
+                            if (boneName.includes("hand") && (boneName.includes("r") || boneName.includes("right"))) {
+                                console.log("Attaching pistol to bone:", child.name);
+                                child.add(gun);
+                                // 手のひらに位置をリセット
+                                gun.position.set(0, 0, 0); 
+                            }
+                        }
+                    });
+                }
 
                 ['./a.glb', './b.glb'].forEach(url => {
                     loader.load(url, (animGltf) => {
@@ -77,9 +134,8 @@
                             if (name === 'Idle_Loop') actions['idle'] = action;
                             if (name === 'Walk_Loop') actions['walk'] = action;
                             if (name === 'Sprint_Loop') actions['run'] = action;
-                            if (name === 'Jump_Start') { actions['jump_start'] = action; action.setLoop(THREE.LoopOnce); action.clampWhenFinished = true; }
-                            if (name === 'Jump_Loop') actions['jump_loop'] = action;
-                            if (name === 'Jump_Land') { actions['jump_land'] = action; action.setLoop(THREE.LoopOnce); action.clampWhenFinished = true; }
+                            // b.glbの上から20番目 (index 19)
+                            if (url === './b.glb' && index === 19) actions['aim_pose'] = action; 
 
                             if (url === './b.glb') {
                                 if (index === 1) actions['crouch_walk'] = action;
@@ -91,6 +147,11 @@
                 });
             });
 
+            document.body.addEventListener('click', () => {
+                document.body.requestPointerLock();
+                document.getElementById('overlay').style.display = 'none';
+            });
+
             window.addEventListener('mousemove', (e) => {
                 if (document.pointerLockElement === document.body) {
                     cameraAzimuth -= e.movementX * 0.002;
@@ -99,19 +160,11 @@
             });
 
             window.onkeydown = (e) => {
-                if (e.repeat) return;
                 const k = e.key.toLowerCase();
                 if (['e','s','q','c'].includes(k)) moveState[k] = true;
-                if (k === 'v') {
-                    isCrouching = !isCrouching;
-                    document.getElementById('status').innerText = isCrouching ? "Mode: Crouching" : "Mode: Standing";
-                }
-                if (k === ' ' && !isJumping && canJump) { 
-                    isJumping = true;
-                    canJump = false; 
-                    velocityY = 0.18; 
-                    fadeToAction('jump_start', 0.1);
-                }
+                if (k === 'v') isCrouching = !isCrouching;
+                if (k === '1') { currentEquip = 1; updateInventoryUI(1); }
+                if (k === '2') { currentEquip = 2; updateInventoryUI(2); }
             };
 
             window.onkeyup = (e) => {
@@ -144,67 +197,38 @@
 
                         const onlyForward = (moveState.e && !moveState.s && !moveState.q && !moveState.c);
                         let speed = (onlyForward && !isCrouching) ? 0.14 : 0.07;
-                        
                         model.position.x += Math.sin(model.rotation.y) * speed;
                         model.position.z += Math.cos(model.rotation.y) * speed;
 
-                        if (!isJumping) {
+                        if (currentEquip === 2 && actions['aim_pose']) {
+                            fadeToAction('aim_pose', 0.2);
+                        } else {
                             if (isCrouching) fadeToAction('crouch_walk', 0.2);
                             else if (onlyForward) fadeToAction('run', 0.2); 
                             else fadeToAction('walk', 0.2);
                         }
                     } else {
-                        if (!isJumping) {
+                        if (currentEquip === 2 && actions['aim_pose']) {
+                            fadeToAction('aim_pose', 0.2);
+                        } else {
                             fadeToAction(isCrouching ? 'crouch_idle' : 'idle', 0.2);
                         }
                     }
 
-                    if (isJumping) {
-                        model.position.y += velocityY;
-                        velocityY -= 0.008;
-                        if (velocityY < 0 && currentAction === actions['jump_start']) fadeToAction('jump_loop', 0.3);
-                        if (model.position.y <= 0) {
-                            model.position.y = 0;
-                            isJumping = false;
-                            fadeToAction('jump_land', 0.1);
-                            setTimeout(() => {
-                                canJump = true;
-                                if (isMoving) fadeToAction(isCrouching ? 'crouch_walk' : (moveState.e ? 'run' : 'walk'), 0.2);
-                                else fadeToAction(isCrouching ? 'crouch_idle' : 'idle', 0.2);
-                            }, 300);
-                        }
-                    } else {
-                        // しゃがみ移行の高さ補正のみ、モデル側で行う
-                        const targetY = isCrouching ? -0.4 : 0;
-                        model.position.y += (targetY - model.position.y) * 0.1;
-                    }
+                    const targetY = isCrouching ? -0.4 : 0;
+                    model.position.y += (targetY - model.position.y) * 0.1;
 
-                    // --- モデル軸のガッチリしたTPSカメラ制御 ---
-                    const camDist = 2.4;
-                    const camSide = 1.0; 
-                    const camHeight = 1.5;
-
+                    // カメラ計算
+                    const camDist = 2.4, camSide = 1.0, camHeight = 1.5;
                     const hDist = camDist * Math.cos(cameraElevation);
                     const vDist = camDist * Math.sin(cameraElevation);
 
-                    // 遅延（Lerp）を廃止し、直接座標をセット
-                    let camX = model.position.x + hDist * Math.sin(cameraAzimuth);
-                    let camZ = model.position.z + hDist * Math.cos(cameraAzimuth);
+                    let camX = model.position.x + hDist * Math.sin(cameraAzimuth) + Math.cos(cameraAzimuth) * camSide;
+                    let camZ = model.position.z + hDist * Math.cos(cameraAzimuth) - Math.sin(cameraAzimuth) * camSide;
                     let camY = model.position.y + camHeight + vDist;
 
-                    // 右オフセット
-                    camX += Math.cos(cameraAzimuth) * camSide;
-                    camZ -= Math.sin(cameraAzimuth) * camSide;
-
                     camera.position.set(camX, camY, camZ);
-
-                    const lookDist = 20;
-                    const lookTarget = new THREE.Vector3(
-                        camera.position.x - Math.sin(cameraAzimuth) * lookDist,
-                        camera.position.y - Math.sin(cameraElevation) * lookDist,
-                        camera.position.z - Math.cos(cameraAzimuth) * lookDist
-                    );
-                    camera.lookAt(lookTarget);
+                    camera.lookAt(camX - Math.sin(cameraAzimuth) * 20, camY - Math.sin(cameraElevation) * 20, camZ - Math.cos(cameraAzimuth) * 20);
                 }
                 renderer.render(scene, camera);
             }
