@@ -8,14 +8,14 @@
     <script src="https://cdn.jsdelivr.net/npm/cannon-es@0.19.0/dist/cannon-es.js"></script>
     <style>
         body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
-        #overlay { position: fixed; top: 20px; right: 20px; color: #0f0; background: rgba(0,0,0,0.8); padding: 15px; border-radius: 5px; font-size: 12px; pointer-events: none; }
+        #overlay { position: fixed; top: 20px; left: 20px; color: #0f0; background: rgba(0,0,0,0.8); padding: 15px; border-radius: 5px; font-size: 12px; pointer-events: none; }
     </style>
 </head>
 <body>
     <div id="overlay">
-        PHYSICS DEBUG MODE ON<br>
-        - 赤い球: 物理判定（Collider）<br>
-        - V: しゃがみ / Space: ジャンプ
+        CANNON.js PHYSICS ENGINE ACTIVE<br>
+        - E: 前進 (Run) / S,Q,C: 移動 (Walk)<br>
+        - V: しゃがみ切替 / Space: ジャンプ
     </div>
 
     <script type="module">
@@ -28,7 +28,7 @@
         let actions = {}, currentAction;
         let cameraAzimuth = 0, cameraElevation = 0.2;
 
-        const RADIUS = 0.4; // 物理判定の半径
+        const RADIUS = 0.4; // 物理球の半径
 
         function fadeToAction(name, duration = 0.2) {
             const nextAction = actions[name];
@@ -53,7 +53,7 @@
                 mass: 1,
                 shape: new CANNON.Sphere(RADIUS),
                 fixedRotation: true,
-                linearDamping: 0.9 // 滑りすぎ防止
+                linearDamping: 0.9
             });
             characterBody.position.set(0, 5, 0);
             world.addBody(characterBody);
@@ -62,21 +62,21 @@
         window.onload = function() {
             initPhysics();
             scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x111111);
+            scene.background = new THREE.Color(0x222222);
             
             camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             document.body.appendChild(renderer.domElement);
 
-            // デバッグ用の赤い球体
+            // 物理デバッグ球
             const debugGeo = new THREE.SphereGeometry(RADIUS);
             const debugMat = new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true });
             debugSphere = new THREE.Mesh(debugGeo, debugMat);
             scene.add(debugSphere);
 
             scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1.2));
-            scene.add(new THREE.GridHelper(500, 100, 0x333333, 0x222222));
+            scene.add(new THREE.GridHelper(500, 100, 0x444444, 0x222222));
 
             document.body.addEventListener('click', () => document.body.requestPointerLock());
 
@@ -149,26 +149,30 @@
                         characterBody.velocity.z = Math.cos(model.rotation.y) * speed;
                         if (!isJumping) fadeToAction(isCrouching ? 'crouch_walk' : (speed > 4 ? 'run' : 'walk'), 0.2);
                     } else {
+                        characterBody.velocity.x *= 0.8;
+                        characterBody.velocity.z *= 0.8;
                         if (!isJumping) fadeToAction(isCrouching ? 'crouch_idle' : 'idle', 0.2);
                     }
 
-                    // --- 究極の接地同期 ---
-                    // 1. デバッグ球体を物理体に同期
+                    // --- 物理と見た目の同期 ---
                     debugSphere.position.copy(characterBody.position);
                     
-                    // 2. モデルを「物理球体の底（地面）」に強制固定
-                    // 物理体の中心(y)から半径(RADIUS)分だけ下げた位置が「本当の地面」
+                    // 足が球の真ん中にある場合の調整値。
+                    // 球の半径(RADIUS) + 腰から足までの距離(約0.5) = 0.9 を引くと足がつく
+                    let verticalAdjustment = RADIUS + 0.5; 
+
+                    if (isCrouching) {
+                        verticalAdjustment += 0.25; // しゃがみ中に浮く分をさらに沈める
+                    }
+
                     model.position.set(
                         characterBody.position.x,
-                        characterBody.position.y - RADIUS, 
+                        characterBody.position.y - verticalAdjustment, 
                         characterBody.position.z
                     );
 
-                    // ★しゃがみ時に足が浮くなら、ここを -0.5 などに調整
-                    if (isCrouching) model.position.y -= 0.15; 
-
                     // 接地判定
-                    if (isJumping && characterBody.position.y <= RADIUS + 0.05) {
+                    if (isJumping && characterBody.position.y <= RADIUS + 0.1) {
                         isJumping = false;
                         fadeToAction('jump_land', 0.1);
                         setTimeout(() => { canJump = true; }, 300);
