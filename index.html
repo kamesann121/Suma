@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>r</title>
+    <title>新しいタブ</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/loaders/GLTFLoader.js"></script>
     <style>
@@ -50,7 +50,7 @@
             
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(window.devicePixelRatio); // 解像度調整でカクつき防止
+            renderer.setPixelRatio(window.devicePixelRatio);
             document.body.appendChild(renderer.domElement);
 
             scene.add(new THREE.HemisphereLight(0xffffff, 0x888888, 1.5));
@@ -174,39 +174,37 @@
                             }, 300);
                         }
                     } else {
+                        // しゃがみ移行の高さ補正のみ、モデル側で行う
                         const targetY = isCrouching ? -0.4 : 0;
                         model.position.y += (targetY - model.position.y) * 0.1;
                     }
 
-                    // --- カメラ制御：カクつき修正版 ---
+                    // --- モデル軸のガッチリしたTPSカメラ制御 ---
                     const camDist = 2.4;
                     const camSide = 1.0; 
                     const camHeight = 1.5;
 
-                    const horizontalDist = camDist * Math.cos(cameraElevation);
-                    const verticalDist = camDist * Math.sin(cameraElevation);
+                    const hDist = camDist * Math.cos(cameraElevation);
+                    const vDist = camDist * Math.sin(cameraElevation);
 
-                    let tX = model.position.x + horizontalDist * Math.sin(cameraAzimuth);
-                    let tZ = model.position.z + horizontalDist * Math.cos(cameraAzimuth);
-                    let tY = model.position.y + camHeight + verticalDist;
+                    // 遅延（Lerp）を廃止し、直接座標をセット
+                    let camX = model.position.x + hDist * Math.sin(cameraAzimuth);
+                    let camZ = model.position.z + hDist * Math.cos(cameraAzimuth);
+                    let camY = model.position.y + camHeight + vDist;
 
-                    tX += Math.cos(cameraAzimuth) * camSide;
-                    tZ -= Math.sin(cameraAzimuth) * camSide;
+                    // 右オフセット
+                    camX += Math.cos(cameraAzimuth) * camSide;
+                    camZ -= Math.sin(cameraAzimuth) * camSide;
 
-                    // デルタタイムを利用したLerp（カクつきを抑える）
-                    // 10 * delta は、FPSが変動しても一定の追従速度を保つための魔法の数字です
-                    const lerpFactor = Math.min(1, 10 * delta); 
-                    camera.position.x += (tX - camera.position.x) * lerpFactor;
-                    camera.position.y += (tY - camera.position.y) * lerpFactor;
-                    camera.position.z += (tZ - camera.position.z) * lerpFactor;
+                    camera.position.set(camX, camY, camZ);
 
                     const lookDist = 20;
-                    const lookT = new THREE.Vector3(
+                    const lookTarget = new THREE.Vector3(
                         camera.position.x - Math.sin(cameraAzimuth) * lookDist,
                         camera.position.y - Math.sin(cameraElevation) * lookDist,
                         camera.position.z - Math.cos(cameraAzimuth) * lookDist
                     );
-                    camera.lookAt(lookT);
+                    camera.lookAt(lookTarget);
                 }
                 renderer.render(scene, camera);
             }
