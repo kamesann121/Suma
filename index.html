@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>新しいタブ</title>
+    <title>r</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/loaders/GLTFLoader.js"></script>
     <style>
@@ -50,6 +50,7 @@
             
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio); // 解像度調整でカクつき防止
             document.body.appendChild(renderer.domElement);
 
             scene.add(new THREE.HemisphereLight(0xffffff, 0x888888, 1.5));
@@ -68,8 +69,7 @@
 
                 ['./a.glb', './b.glb'].forEach(url => {
                     loader.load(url, (animGltf) => {
-                        const anims = animGltf.animations;
-                        anims.forEach((clip, index) => {
+                        animGltf.animations.forEach((clip, index) => {
                             clip.tracks = clip.tracks.filter(t => !t.name.endsWith('.position'));
                             const action = mixer.clipAction(clip);
                             const name = clip.name;
@@ -178,37 +178,35 @@
                         model.position.y += (targetY - model.position.y) * 0.1;
                     }
 
-                    // --- 改良版：滑らかなTPSカメラ制御 ---
+                    // --- カメラ制御：カクつき修正版 ---
                     const camDist = 2.4;
-                    const camSide = 1.0; // 0.9 + 0.1 で 1.0 に設定
+                    const camSide = 1.0; 
                     const camHeight = 1.5;
 
-                    // 目標地点の計算
                     const horizontalDist = camDist * Math.cos(cameraElevation);
                     const verticalDist = camDist * Math.sin(cameraElevation);
 
-                    let targetCamX = model.position.x + horizontalDist * Math.sin(cameraAzimuth);
-                    let targetCamZ = model.position.z + horizontalDist * Math.cos(cameraAzimuth);
-                    let targetCamY = model.position.y + camHeight + verticalDist;
+                    let tX = model.position.x + horizontalDist * Math.sin(cameraAzimuth);
+                    let tZ = model.position.z + horizontalDist * Math.cos(cameraAzimuth);
+                    let tY = model.position.y + camHeight + verticalDist;
 
-                    // 右オフセットを加算
-                    targetCamX += Math.cos(cameraAzimuth) * camSide;
-                    targetCamZ -= Math.sin(cameraAzimuth) * camSide;
+                    tX += Math.cos(cameraAzimuth) * camSide;
+                    tZ -= Math.sin(cameraAzimuth) * camSide;
 
-                    // ★カメラを滑らかに目標へ近づける (Lerp)
-                    // 0.15 は追従の強さ。数値を下げるとよりヌルヌル（遅れて）ついてきます。
-                    camera.position.x += (targetCamX - camera.position.x) * 0.15;
-                    camera.position.y += (targetCamY - camera.position.y) * 0.15;
-                    camera.position.z += (targetCamZ - camera.position.z) * 0.15;
+                    // デルタタイムを利用したLerp（カクつきを抑える）
+                    // 10 * delta は、FPSが変動しても一定の追従速度を保つための魔法の数字です
+                    const lerpFactor = Math.min(1, 10 * delta); 
+                    camera.position.x += (tX - camera.position.x) * lerpFactor;
+                    camera.position.y += (tY - camera.position.y) * lerpFactor;
+                    camera.position.z += (tZ - camera.position.z) * lerpFactor;
 
-                    // 注視点：カメラから真っ直ぐ前を見る
-                    const lookDistance = 20;
-                    const lookTarget = new THREE.Vector3(
-                        camera.position.x - Math.sin(cameraAzimuth) * lookDistance,
-                        camera.position.y - Math.sin(cameraElevation) * lookDistance,
-                        camera.position.z - Math.cos(cameraAzimuth) * lookDistance
+                    const lookDist = 20;
+                    const lookT = new THREE.Vector3(
+                        camera.position.x - Math.sin(cameraAzimuth) * lookDist,
+                        camera.position.y - Math.sin(cameraElevation) * lookDist,
+                        camera.position.z - Math.cos(cameraAzimuth) * lookDist
                     );
-                    camera.lookAt(lookTarget);
+                    camera.lookAt(lookT);
                 }
                 renderer.render(scene, camera);
             }
