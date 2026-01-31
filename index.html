@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>新しいタブ</title>
+    <title>新しいタブ/title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/loaders/GLTFLoader.js"></script>
     <style>
@@ -13,43 +13,34 @@
             color: white; background: rgba(0,0,0,0.7); padding: 25px; border-radius: 12px;
             text-align: center; pointer-events: none; z-index: 200; font-weight: bold;
         }
-        #status { position: fixed; bottom: 120px; left: 20px; color: white; background: rgba(0,0,0,0.5); padding: 10px; border-radius: 5px; font-size: 14px; pointer-events: none; }
-        #reticle {
-            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            width: 8px; height: 8px; border: 2px solid rgba(0, 255, 0, 0.8);
-            border-radius: 50%; pointer-events: none; z-index: 100;
-        }
         #inventory { position: fixed; bottom: 20px; right: 20px; display: flex; gap: 10px; z-index: 300; }
         .slot {
-            width: 60px; height: 60px; background: rgba(0, 0, 0, 0.6); border: 2px solid #555; border-radius: 8px;
-            display: flex; align-items: center; justify-content: center; color: white; font-size: 10px; font-weight: bold; position: relative;
+            width: 70px; height: 70px; background: rgba(0, 0, 0, 0.6); border: 2px solid #555; border-radius: 8px;
+            display: flex; align-items: center; justify-content: center; color: white; font-size: 12px; font-weight: bold; position: relative;
         }
-        .slot.active { border-color: #00ff00; background: rgba(0, 255, 0, 0.2); }
+        .slot.active { border-color: #ffaa00; background: rgba(255, 170, 0, 0.4); }
         .slot::after { content: attr(data-key); position: absolute; top: 2px; left: 4px; color: #aaa; }
     </style>
 </head>
 <body>
-    <div id="overlay">CLICK TO START<br>(1: 素手 / 2: ピストル / V: しゃがみ)</div>
-    <div id="status">Current: Bare Hands</div>
-    <div id="reticle"></div>
+    <div id="overlay">CLICK TO START<br>(1: 殴り / 2: 剣 / 3: 魔法 / 左クリック: 攻撃)</div>
 
     <div id="inventory">
-        <div class="slot active" data-key="1" id="slot-1">素手</div>
-        <div class="slot" data-key="2" id="slot-2">ピストル</div>
-        <div class="slot" data-key="3" id="slot-3"></div>
+        <div class="slot active" data-key="1" id="slot-1">殴り</div>
+        <div class="slot" data-key="2" id="slot-2">剣</div>
+        <div class="slot" data-key="3" id="slot-3">魔法</div>
         <div class="slot" data-key="4" id="slot-4"></div>
         <div class="slot" data-key="5" id="slot-5"></div>
         <div class="slot" data-key="6" id="slot-6"></div>
     </div>
 
     <script>
-        let scene, camera, renderer, clock, mixer, model, gun;
+        let scene, camera, renderer, clock, mixer, model;
         let moveState = { q: false, e: false, c: false, s: false };
         let currentEquip = 1; 
-        let isCrouching = false;
         let actions = {}, currentAction;
+        let isAttacking = false;
         let cameraAzimuth = 0, cameraElevation = 0.2;
-        let upperBodyBones = []; // 上半身のボーンリスト
 
         function fadeToAction(name, duration = 0.2) {
             const nextAction = actions[name];
@@ -60,22 +51,37 @@
             }
         }
 
-        function updateInventoryUI(slotNum) {
-            document.querySelectorAll('.slot').forEach(s => s.classList.remove('active'));
-            document.getElementById(`slot-${slotNum}`).classList.add('active');
-            const names = ["", "Bare Hands", "Pistol", "Empty", "Empty", "Empty", "Empty"];
-            document.getElementById('status').innerText = "Current: " + names[slotNum];
-            if (gun) gun.visible = (slotNum === 2);
+        // 攻撃処理
+        function performAttack() {
+            if (isAttacking) return;
+            isAttacking = true;
+
+            if (currentEquip === 1) { // 殴り
+                fadeToAction('punch', 0.1);
+                setTimeout(() => { isAttacking = false; }, 600);
+            } 
+            else if (currentEquip === 2) { // 剣
+                fadeToAction('sword_attack', 0.1);
+                setTimeout(() => { isAttacking = false; }, 800);
+            } 
+            else if (currentEquip === 3) { // 魔法
+                fadeToAction('magic_start', 0.1); // 構え
+                setTimeout(() => {
+                    fadeToAction('magic_fire', 0.05); // 撃つ
+                    setTimeout(() => {
+                        fadeToAction('magic_end', 0.2); // 手を下ろす
+                        setTimeout(() => { isAttacking = false; }, 400);
+                    }, 500);
+                }, 300);
+            }
         }
 
         window.onload = function() {
             scene = new THREE.Scene();
             scene.background = new THREE.Color(0xdddddd);
             camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
-            
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(window.devicePixelRatio);
             document.body.appendChild(renderer.domElement);
 
             scene.add(new THREE.HemisphereLight(0xffffff, 0x888888, 1.5));
@@ -83,33 +89,10 @@
 
             const loader = new THREE.GLTFLoader();
 
-            loader.load('./Pistol.glb', (gltf) => {
-                gun = gltf.scene;
-                gun.scale.set(0.0016, 0.0016, 0.0016); 
-                gun.rotation.set(Math.PI / 2, Math.PI / 2, 0); 
-                gun.visible = false; 
-            });
-
             loader.load('./m.glb', (gltf) => {
                 model = gltf.scene;
                 scene.add(model);
                 mixer = new THREE.AnimationMixer(model);
-
-                model.traverse((child) => {
-                    if (child.isBone) {
-                        const name = child.name.toLowerCase();
-                        // 上半身として扱うボーン（背骨、肩、腕、手、頭）をリストアップ
-                        if (name.includes("spine") || name.includes("arm") || name.includes("hand") || name.includes("neck") || name.includes("head") || name.includes("shoulder")) {
-                            upperBodyBones.push(child);
-                        }
-                        
-                        // ピストルのアタッチ（前：0.08、左：-0.04に調整）
-                        if (name.includes("hand") && (name.includes("r") || name.includes("right"))) {
-                            child.add(gun);
-                            gun.position.set(-0.04, 0.01, 0.08); 
-                        }
-                    }
-                });
 
                 ['./a.glb', './b.glb'].forEach(url => {
                     loader.load(url, (animGltf) => {
@@ -117,18 +100,29 @@
                             clip.tracks = clip.tracks.filter(t => !t.name.endsWith('.position'));
                             const action = mixer.clipAction(clip);
                             const name = clip.name;
+
+                            // 基本（素手）
                             if (name === 'Idle_Loop') actions['idle'] = action;
                             if (name === 'Walk_Loop') actions['walk'] = action;
                             if (name === 'Sprint_Loop') actions['run'] = action;
-                            if (url === './b.glb' && index === 19) {
-                                actions['aim_pose'] = action;
-                                // 構えポーズの情報をキャッシュしておく（後で手動コピーするため）
-                                action.play();
-                                action.weight = 0; // 通常は非表示
-                            }
+                            
+                            // b.glb からの指定モーション
                             if (url === './b.glb') {
-                                if (index === 1) actions['crouch_walk'] = action;
-                                if (index === 2) actions['crouch_idle'] = action;
+                                if (index === 25) actions['punch'] = action;
+                                if (index === 41) actions['sword_attack'] = action;
+                                if (index === 43) actions['sword_idle'] = action;
+                                if (index === 44) actions['sword_walk'] = action;
+                                if (index === 38) actions['sword_run'] = action;
+                                if (index === 34) actions['magic_start'] = action;
+                                if (index === 36) actions['magic_pose'] = action;
+                                if (index === 37) actions['magic_fire'] = action;
+                                if (index === 35) actions['magic_end'] = action;
+
+                                // 攻撃系は1回再生
+                                if ([25, 41, 34, 37, 35].includes(index)) {
+                                    action.setLoop(THREE.LoopOnce);
+                                    action.clampWhenFinished = true;
+                                }
                             }
                         });
                         if (actions['idle']) fadeToAction('idle');
@@ -136,9 +130,13 @@
                 });
             });
 
-            document.body.addEventListener('click', () => {
-                document.body.requestPointerLock();
-                document.getElementById('overlay').style.display = 'none';
+            document.body.addEventListener('mousedown', (e) => {
+                if (document.pointerLockElement !== document.body) {
+                    document.body.requestPointerLock();
+                    document.getElementById('overlay').style.display = 'none';
+                } else if (e.button === 0) {
+                    performAttack();
+                }
             });
 
             window.addEventListener('mousemove', (e) => {
@@ -149,11 +147,13 @@
             });
 
             window.onkeydown = (e) => {
-                const k = e.key.toLowerCase();
-                if (['e','s','q','c'].includes(k)) moveState[k] = true;
-                if (k === 'v') isCrouching = !isCrouching;
-                if (k === '1') { currentEquip = 1; updateInventoryUI(1); }
-                if (k === '2') { currentEquip = 2; updateInventoryUI(2); }
+                const k = e.key;
+                if (['e','s','q','c'].includes(k.toLowerCase())) moveState[k.toLowerCase()] = true;
+                if (k === '1' || k === '2' || k === '3') {
+                    currentEquip = parseInt(k);
+                    document.querySelectorAll('.slot').forEach(s => s.classList.remove('active'));
+                    document.getElementById(`slot-${k}`).classList.add('active');
+                }
             };
 
             window.onkeyup = (e) => {
@@ -166,13 +166,9 @@
             function animate() {
                 requestAnimationFrame(animate);
                 const delta = clock.getDelta();
+                if (mixer) mixer.update(delta);
 
-                // 1. アニメーションを通常通り更新（これで下半身が動く）
-                if (mixer) {
-                    mixer.update(delta);
-                }
-
-                if (model) {
+                if (model && !isAttacking) {
                     let inputX = 0, inputZ = 0;
                     if (moveState.e) inputZ -= 1;
                     if (moveState.s) inputZ += 1;
@@ -180,7 +176,6 @@
                     if (moveState.c) inputX += 1;
                     const isMoving = (inputX !== 0 || inputZ !== 0);
 
-                    // 移動と向き
                     if (isMoving) {
                         const targetRotation = Math.atan2(inputX, inputZ) + cameraAzimuth;
                         let diff = targetRotation - model.rotation.y;
@@ -189,38 +184,25 @@
                         model.rotation.y += diff * 0.15;
 
                         const onlyForward = (moveState.e && !moveState.s && !moveState.q && !moveState.c);
-                        let speed = (onlyForward && !isCrouching) ? 0.14 : 0.07;
+                        let speed = onlyForward ? 0.14 : 0.07;
                         model.position.x += Math.sin(model.rotation.y) * speed;
                         model.position.z += Math.cos(model.rotation.y) * speed;
 
-                        if (isCrouching) fadeToAction('crouch_walk', 0.2);
-                        else if (onlyForward) fadeToAction('run', 0.2); 
-                        else fadeToAction('walk', 0.2);
+                        // 装備に応じた移動アニメーションの分岐
+                        if (currentEquip === 2) {
+                            fadeToAction(onlyForward ? 'sword_run' : 'sword_walk', 0.2);
+                        } else {
+                            fadeToAction(onlyForward ? 'run' : 'walk', 0.2);
+                        }
                     } else {
-                        fadeToAction(isCrouching ? 'crouch_idle' : 'idle', 0.2);
+                        // 装備に応じた待機アニメーションの分岐
+                        if (currentEquip === 2) fadeToAction('sword_idle', 0.2);
+                        else if (currentEquip === 3) fadeToAction('magic_pose', 0.2); // 魔法装備中は常に構え
+                        else fadeToAction('idle', 0.2);
                     }
+                }
 
-                    // 2. ★ 上半身のボーンを「構えポーズ」で強制上書き（ピストル装備時のみ）
-                    if (currentEquip === 2 && actions['aim_pose']) {
-                        // このタイミングでボーンを強制固定することで、下半身は歩きつつ腕は固定される
-                        // 注：本来はIKなどを使いますが、まずは一番シンプルな「ポーズ固定」を試します
-                        model.traverse((child) => {
-                            if (child.isBone && upperBodyBones.includes(child)) {
-                                // アニメーションミキサーによって動かされた値を無視し、
-                                // プログラムで「前を向く」ように微調整を加えることも可能
-                            }
-                        });
-                        // 構えポーズの影響を最大化
-                        actions['aim_pose'].weight = 1.0; 
-                    } else if (actions['aim_pose']) {
-                        actions['aim_pose'].weight = 0;
-                    }
-
-                    // 高さ
-                    const targetY = isCrouching ? -0.4 : 0;
-                    model.position.y += (targetY - model.position.y) * 0.1;
-
-                    // カメラ
+                if (model) {
                     const camDist = 2.4, camSide = 1.0, camHeight = 1.5;
                     const hDist = camDist * Math.cos(cameraElevation);
                     const vDist = camDist * Math.sin(cameraElevation);
