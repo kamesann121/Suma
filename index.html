@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title></title>
+    <title>新しいタブ</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/loaders/GLTFLoader.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/cannon-es@0.19.0/dist/cannon-es.js"></script>
@@ -13,9 +13,10 @@
 </head>
 <body>
     <div id="overlay">
-        CONTROLS UPDATED<br>
-        - Vキー: 0.2秒間隔で切り替え可能<br>
-        - しゃがみ歩きモーション優先度修正済
+        SYSTEM UPDATED<br>
+        - Speed: Walk(5) / Run(10) / Crouch(3)<br>
+        - Motion: Crouch priority fix<br>
+        - Vキー: クールタイムなしで即応
     </div>
 
     <script type="module">
@@ -25,7 +26,6 @@
         let world, characterBody, debugSphere; 
         let moveState = { q: false, e: false, c: false, s: false };
         let isJumping = false, canJump = true, isCrouching = false;
-        let lastCrouchTime = 0; // しゃがみクールタイム用
         let actions = {}, currentAction;
         let cameraAzimuth = 0, cameraElevation = 0.2;
 
@@ -37,11 +37,11 @@
 
         function initPhysics() {
             world = new CANNON.World();
-            world.gravity.set(0, -20, 0);
+            world.gravity.set(0, -25, 0); // 重力を少し強めて接地感を出す
             const floorBody = new CANNON.Body({ mass: 0, shape: new CANNON.Plane() });
             floorBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
             world.addBody(floorBody);
-            characterBody = new CANNON.Body({ mass: 1, shape: new CANNON.Sphere(RADIUS), fixedRotation: true, linearDamping: 0.9 });
+            characterBody = new CANNON.Body({ mass: 1, shape: new CANNON.Sphere(RADIUS), fixedRotation: true, linearDamping: 0.5 });
             characterBody.position.set(0, 2, 0); 
             world.addBody(characterBody);
         }
@@ -55,13 +55,15 @@
             renderer.setSize(window.innerWidth, window.innerHeight);
             document.body.appendChild(renderer.domElement);
 
-            scene.add(new THREE.Mesh(new THREE.PlaneGeometry(1000, 1000), new THREE.MeshStandardMaterial({ color: 0x111111 })));
+            scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2000, 2000), new THREE.MeshStandardMaterial({ color: 0x111111 })));
             const grid = new THREE.GridHelper(1000, 200, 0x333333, 0x666666);
             grid.position.y = -0.01; 
             scene.add(grid);
+            
+            // 物理デバッグ球
             debugSphere = new THREE.Mesh(new THREE.SphereGeometry(RADIUS), new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true }));
             scene.add(debugSphere);
-            scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1.5));
+            scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1.8));
 
             document.body.addEventListener('click', () => document.body.requestPointerLock());
 
@@ -82,15 +84,16 @@
                             if (clip.name === 'Jump_Loop') actions['jump_loop'] = action;
                             if (clip.name === 'Jump_Land') { action.setLoop(THREE.LoopOnce); action.clampWhenFinished = true; actions['jump_land'] = action; }
                             
-                            // しゃがみモーションの取得方法を強化
+                            // しゃがみ系の名前判別をより確実に
                             if (url.includes('b.glb')) {
-                                if (clip.name.toLowerCase().includes('crouch') && clip.name.toLowerCase().includes('walk')) actions['crouch_walk'] = action;
-                                else if (clip.name.toLowerCase().includes('crouch') && clip.name.toLowerCase().includes('idle')) actions['crouch_idle'] = action;
+                                const n = clip.name.toLowerCase();
+                                if (n.includes('crouch') && (n.includes('walk') || n.includes('run'))) actions['crouch_walk'] = action;
+                                else if (n.includes('crouch')) actions['crouch_idle'] = action;
                             }
                         });
                         if (actions['idle'] && !currentAction) {
-                            actions['idle'].play();
                             currentAction = actions['idle'];
+                            currentAction.play();
                         }
                     });
                 });
@@ -106,16 +109,11 @@
             window.onkeydown = (e) => {
                 const k = e.key.toLowerCase();
                 if (['e', 's', 'q', 'c'].includes(k)) moveState[k] = true;
-                
-                // しゃがみ切り替え（0.2秒のクールタイム）
-                const now = Date.now();
-                if (k === 'v' && now - lastCrouchTime > 200) {
+                if (k === 'v') {
                     isCrouching = !isCrouching;
-                    lastCrouchTime = now;
                 }
-
                 if (k === ' ' && !isJumping && canJump) { 
-                    characterBody.velocity.y = 8;
+                    characterBody.velocity.y = 10;
                     isJumping = true; canJump = false;
                     fadeToAction('jump_start', 0.1);
                 }
@@ -128,7 +126,7 @@
 
             clock = new THREE.Clock();
 
-            function fadeToAction(name, duration = 0.2) {
+            function fadeToAction(name, duration = 0.15) {
                 const nextAction = actions[name];
                 if (nextAction && currentAction !== nextAction) {
                     if (currentAction) currentAction.fadeOut(duration);
@@ -148,48 +146,58 @@
                     let inputZ = (moveState.e ? -1 : 0) + (moveState.s ? 1 : 0);
                     let isMoving = (inputX !== 0 || inputZ !== 0);
 
+                    // 1. 速度と回転の計算
                     if (isMoving) {
                         const targetRot = Math.atan2(inputX, inputZ) + cameraAzimuth;
-                        model.rotation.y += (targetRot - model.rotation.y) * 0.15;
+                        model.rotation.y += (targetRot - model.rotation.y) * 0.2;
                         
-                        // 移動速度の設定
-                        let speed = 3;
+                        let speed = 0;
                         if (isCrouching) {
-                            speed = 1.5; // しゃがみ歩きは遅く
-                            if (!isJumping) fadeToAction('crouch_walk', 0.2);
+                            speed = 3.0; // しゃがみ歩き（爆速化）
                         } else {
-                            speed = (moveState.e && !moveState.q && !moveState.c) ? 6 : 3;
-                            if (!isJumping) fadeToAction(speed > 4 ? 'run' : 'walk', 0.2);
+                            // 前進(E)のみなら Run(10)、それ以外は Walk(5)
+                            speed = (moveState.e && !moveState.q && !moveState.c) ? 10.0 : 5.0;
                         }
                         
                         characterBody.velocity.x = Math.sin(model.rotation.y) * speed;
                         characterBody.velocity.z = Math.cos(model.rotation.y) * speed;
                     } else {
-                        characterBody.velocity.x *= 0.8; characterBody.velocity.z *= 0.8;
-                        if (!isJumping) fadeToAction(isCrouching ? 'crouch_idle' : 'idle', 0.2);
+                        characterBody.velocity.x *= 0.5; characterBody.velocity.z *= 0.5;
                     }
 
-                    // 接地補正の計算
+                    // 2. モーション決定ロジック（ここを強化）
+                    if (!isJumping) {
+                        if (isCrouching) {
+                            // しゃがみ時は他の歩き/走りを一切許さない
+                            fadeToAction(isMoving ? 'crouch_walk' : 'crouch_idle', 0.1);
+                        } else {
+                            if (isMoving) {
+                                const currentSpeed = Math.sqrt(characterBody.velocity.x**2 + characterBody.velocity.z**2);
+                                fadeToAction(currentSpeed > 7 ? 'run' : 'walk', 0.2);
+                            } else {
+                                fadeToAction('idle', 0.2);
+                            }
+                        }
+                    }
+
+                    // 3. 物理同期
                     const targetOffset = isCrouching ? OFFSET_CROUCH : OFFSET_STAND;
-                    currentVisualOffset += (targetOffset - currentVisualOffset) * 0.1;
-
+                    currentVisualOffset += (targetOffset - currentVisualOffset) * 0.15;
                     debugSphere.position.copy(characterBody.position);
-                    model.position.set(
-                        characterBody.position.x,
-                        characterBody.position.y - (RADIUS + currentVisualOffset), 
-                        characterBody.position.z
-                    );
+                    model.position.set(characterBody.position.x, characterBody.position.y - (RADIUS + currentVisualOffset), characterBody.position.z);
 
+                    // 4. カメラ
                     const targetY = model.position.y + 1.2;
                     smoothCameraTargetY += (targetY - smoothCameraTargetY) * 0.1;
-                    const dist = 5;
+                    const dist = 6;
                     camera.position.set(
                         model.position.x + dist * Math.sin(cameraAzimuth) * Math.cos(cameraElevation),
-                        smoothCameraTargetY + 0.6 + dist * Math.sin(cameraElevation),
+                        smoothCameraTargetY + 1.0 + dist * Math.sin(cameraElevation),
                         model.position.z + dist * Math.cos(cameraAzimuth) * Math.cos(cameraElevation)
                     );
                     camera.lookAt(model.position.x, smoothCameraTargetY, model.position.z);
 
+                    // 5. 接地判定
                     if (isJumping && characterBody.position.y <= RADIUS + 0.1) {
                         isJumping = false;
                         fadeToAction('jump_land', 0.1);
