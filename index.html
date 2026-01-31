@@ -6,26 +6,29 @@
     <title>新しいタブ</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/loaders/GLTFLoader.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     <style>
-        body { margin: 0; overflow: hidden; background: #dcdcdc; font-family: sans-serif; }
+        body { margin: 0; overflow: hidden; background: #dcdcdc; font-family: sans-serif; cursor: crosshair; }
         #ui-sidebar { 
             position: fixed; top: 0; left: 0; width: 170px; height: 100vh; 
             background: rgba(255,255,255,0.9); border-right: 1px solid #ccc;
             display: flex; flex-direction: column; gap: 4px; padding: 10px;
             overflow-y: auto; z-index: 100; box-sizing: border-box;
         }
-        #ui-sidebar button { width: 100%; padding: 6px; background: #fff; border: 1px solid #999; border-radius: 4px; font-size: 10px; cursor: pointer; text-align: left; }
+        #ui-sidebar button { width: 100%; padding: 6px; background: #fff; border: 1px solid #999; border-radius: 4px; font-size: 10px; cursor: pointer; }
     </style>
 </head>
 <body>
     <div id="ui-sidebar"></div>
 
     <script>
-        let scene, camera, renderer, clock, mixer, model, controls;
+        let scene, camera, renderer, clock, mixer, model;
         let moveState = { q: false, e: false, c: false, s: false };
         let velocityY = 0, isJumping = false;
         let actions = {}, currentAction;
+
+        // 視点管理用
+        let cameraAzimuth = 0; // 左右回転
+        let cameraElevation = 0.3; // 上下角度
 
         function fadeToAction(name, duration = 0.2) {
             const nextAction = actions[name];
@@ -40,20 +43,13 @@
             scene = new THREE.Scene();
             scene.background = new THREE.Color(0xdddddd);
             camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
-            camera.position.set(0, 3, 6);
             
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             document.body.appendChild(renderer.domElement);
 
-            // 【修正】マウスで視点を自由に動かせるように復活
-            controls = new THREE.OrbitControls(camera, renderer.domElement);
-            controls.enableDamping = true;
-            controls.dampingFactor = 0.1;
-            controls.enablePan = false; 
-
             scene.add(new THREE.HemisphereLight(0xffffff, 0x888888, 1.5));
-            scene.add(new THREE.GridHelper(100, 100, 0x999999, 0xcccccc));
+            scene.add(new THREE.GridHelper(200, 200, 0x999999, 0xcccccc));
 
             const loader = new THREE.GLTFLoader();
             loader.load('./m.glb', (gltf) => {
@@ -81,14 +77,27 @@
                 });
             });
 
+            // フォートナイト風：マウス移動で視点回転
+            window.addEventListener('mousemove', (e) => {
+                const sensitivity = 0.003;
+                cameraAzimuth -= e.movementX * sensitivity;
+                cameraElevation = Math.max(-0.5, Math.min(1.0, cameraElevation + e.movementY * sensitivity));
+            });
+
             window.onkeydown = (e) => {
                 const k = e.key.toLowerCase();
-                if (['e','s','q','c'].includes(k)) moveState[k] = true;
+                if (k === 'e') moveState.e = true;
+                if (k === 's') moveState.s = true;
+                if (k === 'q') moveState.q = true;
+                if (k === 'c') moveState.c = true;
                 if (k === ' ' && !isJumping) { isJumping = true; velocityY = 0.15; }
             };
             window.onkeyup = (e) => {
                 const k = e.key.toLowerCase();
-                if (['e','s','q','c'].includes(k)) moveState[k] = false;
+                if (k === 'e') moveState.e = false;
+                if (k === 's') moveState.s = false;
+                if (k === 'q') moveState.q = false;
+                if (k === 'c') moveState.c = false;
             };
 
             clock = new THREE.Clock();
@@ -97,35 +106,27 @@
                 requestAnimationFrame(animate);
                 const delta = clock.getDelta();
                 if (mixer) mixer.update(delta);
-                if (controls) controls.update();
 
                 if (model) {
-                    let inputX = 0;
-                    let inputZ = 0;
+                    let inputX = 0; // 左右
+                    let inputZ = 0; // 前後
 
-                    if (moveState.e) inputZ -= 1; 
-                    if (moveState.s) inputZ += 1; 
-                    if (moveState.q) inputX -= 1; 
-                    if (moveState.c) inputX += 1; 
+                    if (moveState.e) inputZ += 1; // 修正：前へ
+                    if (moveState.s) inputZ -= 1; // 修正：後ろへ
+                    if (moveState.q) inputX += 1; // 修正：左へ
+                    if (moveState.c) inputX -= 1; // 修正：右へ
 
                     if (inputX !== 0 || inputZ !== 0) {
-                        // 【重要】カメラの向きを取得（Y軸の回転のみ）
-                        const cameraY = Math.atan2(camera.position.x - model.position.x, camera.position.z - model.position.z);
-                        
-                        // 入力方向の計算
                         const moveAngle = Math.atan2(inputX, inputZ);
-                        
-                        // モデルが向くべき方向（カメラの向き ＋ 入力方向）
-                        const targetRotation = moveAngle + cameraY + Math.PI;
+                        const targetRotation = moveAngle + cameraAzimuth;
 
-                        // 【修正】スムーズに回転させる処理
+                        // スムーズ回転
                         let diff = targetRotation - model.rotation.y;
                         while (diff < -Math.PI) diff += Math.PI * 2;
                         while (diff > Math.PI) diff -= Math.PI * 2;
                         model.rotation.y += diff * 0.15;
 
-                        // 【修正】現在向いている方向へ進む
-                        const speed = 0.08;
+                        const speed = 0.1;
                         model.position.x += Math.sin(model.rotation.y) * speed;
                         model.position.z += Math.cos(model.rotation.y) * speed;
 
@@ -140,8 +141,14 @@
                         if (model.position.y <= 0) { model.position.y = 0; isJumping = false; }
                     }
 
-                    // カメラの注視点を常にモデルの腰あたりに固定（移動に追従）
-                    controls.target.set(model.position.x, model.position.y + 1.2, model.position.z);
+                    // カメラの追従計算（キャラの後方・上方に配置）
+                    const dist = 5;
+                    camera.position.set(
+                        model.position.x + dist * Math.sin(cameraAzimuth) * Math.cos(cameraElevation),
+                        model.position.y + 1.5 + dist * Math.sin(cameraElevation),
+                        model.position.z + dist * Math.cos(cameraAzimuth) * Math.cos(cameraElevation)
+                    );
+                    camera.lookAt(model.position.x, model.position.y + 1.2, model.position.z);
                 }
                 renderer.render(scene, camera);
             }
