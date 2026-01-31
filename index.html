@@ -14,10 +14,9 @@
             text-align: center; pointer-events: none; z-index: 200; font-weight: bold;
         }
         #status { position: fixed; bottom: 20px; left: 20px; color: white; background: rgba(0,0,0,0.5); padding: 10px; border-radius: 5px; font-size: 14px; pointer-events: none; }
-        /* ついでに画面中央にレティクル（照準）を表示するためのCSSを追加 */
         #reticle {
             position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            width: 10px; height: 10px; border: 2px solid rgba(255,255,255,0.8);
+            width: 8px; height: 8px; border: 2px solid rgba(0, 255, 0, 0.8); /* 少し目立つ緑色に */
             border-radius: 50%; pointer-events: none; z-index: 100;
         }
     </style>
@@ -95,7 +94,6 @@
             window.addEventListener('mousemove', (e) => {
                 if (document.pointerLockElement === document.body) {
                     cameraAzimuth -= e.movementX * 0.002;
-                    // 上下の視点移動制限を少し広げました
                     cameraElevation = Math.max(-0.7, Math.min(1.1, cameraElevation + e.movementY * 0.002));
                 }
             });
@@ -180,27 +178,24 @@
                         model.position.y += (targetY - model.position.y) * 0.1;
                     }
 
-                    // --- さらに右へ寄せたTPSカメラ制御 ---
-                    const camDist = 2.0;     // キャラに近づける
-                    const camSide = 1.4;     // さらに右（合計1.4）
-                    const camHeight = 1.4;   // 肩の高さ
+                    // --- TPSカメラ制御：バランス調整版 ---
+                    const camDist = 2.4;     // 2.0から少し引いて全体を見やすく
+                    const camSide = 1.1;     // 1.4から-0.3して1.1へ
+                    const camHeight = 1.5;   // 少し高めにして見下ろしやすく
 
                     const horizontalDist = camDist * Math.cos(cameraElevation);
                     const verticalDist = camDist * Math.sin(cameraElevation);
 
-                    // 背面基本位置
                     let camPosX = model.position.x + horizontalDist * Math.sin(cameraAzimuth);
                     let camPosZ = model.position.z + horizontalDist * Math.cos(cameraAzimuth);
                     let camPosY = model.position.y + camHeight + verticalDist;
 
-                    // 右方向へのオフセット
                     camPosX += Math.cos(cameraAzimuth) * camSide;
                     camPosZ -= Math.sin(cameraAzimuth) * camSide;
 
                     camera.position.set(camPosX, camPosY, camPosZ);
 
-                    // 視点はレティクル（中央）に合わせて前方を向く
-                    const lookDistance = 10; // どのくらい先を見るか
+                    const lookDistance = 20; // 視線をより遠くに
                     const lookTarget = new THREE.Vector3(
                         camPosX - Math.sin(cameraAzimuth) * lookDistance,
                         camPosY - Math.sin(cameraElevation) * lookDistance,
