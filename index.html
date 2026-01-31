@@ -3,33 +3,44 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>3D Battle Integration</title>
+    <title>3D Motion Selector</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/loaders/GLTFLoader.js"></script>
     <style>
-        body { margin: 0; overflow: hidden; background: #1a1a1a; font-family: sans-serif; }
-        #log { position: fixed; top: 10px; left: 10px; width: 80%; max-height: 30vh; background: rgba(0,0,0,0.8); color: #0f0; padding: 10px; font-size: 11px; overflow-y: auto; z-index: 100; border: 1px solid #444; pointer-events: none; }
-        #controls { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; z-index: 100; }
-        button { padding: 15px 25px; background: #ff4444; color: white; border: none; border-radius: 30px; font-weight: bold; box-shadow: 0 4px 0 #990000; }
-        button:active { transform: translateY(2px); box-shadow: 0 2px 0 #990000; }
+        body { margin: 0; overflow: hidden; background: #1a1a1a; font-family: sans-serif; color: #0f0; }
+        #log { 
+            position: fixed; top: 10px; left: 10px; width: 85%; max-height: 25vh; 
+            background: rgba(0,0,0,0.8); padding: 10px; font-size: 11px; 
+            overflow-y: auto; z-index: 100; border: 1px solid #444; pointer-events: none; 
+        }
+        #controls { 
+            position: fixed; bottom: 20px; left: 0; width: 100%; 
+            display: flex; flex-wrap: wrap; justify-content: center; 
+            gap: 8px; z-index: 100; padding: 10px; box-sizing: border-box;
+            background: rgba(0,0,0,0.5);
+        }
+        button { 
+            padding: 10px 15px; background: #444; color: white; border: 1px solid #666; 
+            border-radius: 5px; font-size: 12px; min-width: 80px;
+        }
+        button:active { background: #ff4444; }
     </style>
 </head>
 <body>
-    <div id="log">Initializing Battle System...</div>
-    <div id="controls">
-        <button id="play-btn">ACTION!</button>
-    </div>
+    <div id="log">System: Scanning Assets...</div>
+    <div id="controls"></div>
 
     <script>
         const logEl = document.getElementById('log');
+        const btnContainer = document.getElementById('controls');
         function debug(msg) { logEl.innerHTML += `<div>> ${msg}</div>`; logEl.scrollTop = logEl.scrollHeight; }
 
         window.onload = function() {
             const scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x333333);
+            scene.background = new THREE.Color(0x222222);
             
             const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
-            camera.position.set(0, 1.5, 4); // キャラを正面から捉える
+            camera.position.set(0, 1.5, 4); 
             camera.lookAt(0, 1, 0);
 
             const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -38,43 +49,49 @@
             document.body.appendChild(renderer.domElement);
 
             scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 2));
-            const grid = new THREE.GridHelper(20, 20, 0x888888, 0x444444);
-            scene.add(grid);
+            scene.add(new THREE.GridHelper(20, 20, 0x444444, 0x222222));
 
             const loader = new THREE.GLTFLoader();
-            let mixer, action;
+            let mixer;
 
-            debug("1. Loading Body (model.glb)...");
+            debug("1. Loading model.glb...");
             loader.load('./public/model.glb', (gltf) => {
                 const character = gltf.scene;
                 scene.add(character);
-                debug("Body OK.");
+                debug("Model OK.");
 
-                debug("2. Loading Motion (animation.glb)...");
+                debug("2. Loading animation.glb...");
                 loader.load('./public/animation.glb', (animGltf) => {
                     mixer = new THREE.AnimationMixer(character);
                     
-                    if (animGltf.animations.length > 0) {
-                        const clip = animGltf.animations[0];
-                        action = mixer.clipAction(clip);
-                        
-                        // ★倒れ・振動バグ対策の補正設定★
-                        // アニメーション適用時にモデルが勝手に移動するのを防ぐ
-                        action.setEffectiveWeight(1);
-                        
-                        debug(`Motion OK: ${clip.name}`);
-                        debug("READY! Push ACTION button.");
+                    if (animGltf.animations && animGltf.animations.length > 0) {
+                        debug(`Found ${animGltf.animations.length} animations.`);
+
+                        animGltf.animations.forEach((clip, index) => {
+                            // 【腕伸び対策】関節の回転情報だけを残し、位置移動を削除
+                            clip.tracks = clip.tracks.filter(track => !track.name.endsWith('.position'));
+
+                            const btn = document.createElement('button');
+                            const clipName = clip.name || `Motion ${index}`;
+                            btn.innerText = clipName;
+                            
+                            btn.onclick = () => {
+                                mixer.stopAllAction();
+                                const action = mixer.clipAction(clip);
+                                action.reset().fadeIn(0.2).play();
+                                debug(`Play: ${clipName}`);
+                            };
+                            
+                            btnContainer.appendChild(btn);
+                        });
+
+                        // 最初の一個を自動再生
+                        mixer.clipAction(animGltf.animations[0]).play();
                     } else {
                         debug("No animations found in animation.glb", true);
                     }
-                });
+                }, undefined, (e) => debug("Anim Load Error."));
 
-                document.getElementById('play-btn').onclick = () => {
-                    if (action) {
-                        action.reset().play();
-                        debug("Playing animation...");
-                    }
-                };
             }, undefined, (e) => debug("Model Load Error."));
 
             const clock = new THREE.Clock();
@@ -84,6 +101,13 @@
                 renderer.render(scene, camera);
             }
             animate();
+
+            // 画面サイズ変更対応
+            window.onresize = () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            };
         };
     </script>
 </body>
