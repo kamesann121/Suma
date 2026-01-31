@@ -13,9 +13,9 @@
 </head>
 <body>
     <div id="overlay">
-        CANNON.js PHYSICS ENGINE ACTIVE<br>
-        - E: 前進 (Run) / S,Q,C: 移動 (Walk)<br>
-        - V: しゃがみ切替 / Space: ジャンプ
+        CANNON.js PHYSICS ACTIVE<br>
+        - 地面の白線は1m間隔です<br>
+        - V: しゃがみ / Space: ジャンプ
     </div>
 
     <script type="module">
@@ -28,7 +28,7 @@
         let actions = {}, currentAction;
         let cameraAzimuth = 0, cameraElevation = 0.2;
 
-        const RADIUS = 0.4; // 物理球の半径
+        const RADIUS = 0.4; 
 
         function fadeToAction(name, duration = 0.2) {
             const nextAction = actions[name];
@@ -43,12 +43,10 @@
             world = new CANNON.World();
             world.gravity.set(0, -20, 0);
 
-            // 地面
             const floorBody = new CANNON.Body({ mass: 0, shape: new CANNON.Plane() });
             floorBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
             world.addBody(floorBody);
 
-            // キャラ物理体
             characterBody = new CANNON.Body({
                 mass: 1,
                 shape: new CANNON.Sphere(RADIUS),
@@ -62,12 +60,24 @@
         window.onload = function() {
             initPhysics();
             scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x222222);
+            scene.background = new THREE.Color(0x050505);
             
             camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             document.body.appendChild(renderer.domElement);
+
+            // --- 地面を「アスファルト風」にする ---
+            // 濃い灰色の板
+            const floorGeo = new THREE.PlaneGeometry(1000, 1000);
+            const floorMat = new THREE.MeshStandardMaterial({ color: 0x222222 });
+            const floorMesh = new THREE.Mesh(floorGeo, floorMat);
+            floorMesh.rotation.x = -Math.PI / 2;
+            scene.add(floorMesh);
+
+            // 1m間隔のグリッド（白線）
+            const grid = new THREE.GridHelper(1000, 1000, 0x444444, 0x888888);
+            scene.add(grid);
 
             // 物理デバッグ球
             const debugGeo = new THREE.SphereGeometry(RADIUS);
@@ -75,8 +85,7 @@
             debugSphere = new THREE.Mesh(debugGeo, debugMat);
             scene.add(debugSphere);
 
-            scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1.2));
-            scene.add(new THREE.GridHelper(500, 100, 0x444444, 0x222222));
+            scene.add(new THREE.HemisphereLight(0xffffff, 0x000000, 1.5));
 
             document.body.addEventListener('click', () => document.body.requestPointerLock());
 
@@ -157,13 +166,9 @@
                     // --- 物理と見た目の同期 ---
                     debugSphere.position.copy(characterBody.position);
                     
-                    // 足が球の真ん中にある場合の調整値。
-                    // 球の半径(RADIUS) + 腰から足までの距離(約0.5) = 0.9 を引くと足がつく
+                    // 足元調整
                     let verticalAdjustment = RADIUS + 0.5; 
-
-                    if (isCrouching) {
-                        verticalAdjustment += 0.25; // しゃがみ中に浮く分をさらに沈める
-                    }
+                    if (isCrouching) verticalAdjustment += 0.25; 
 
                     model.position.set(
                         characterBody.position.x,
