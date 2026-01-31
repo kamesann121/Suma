@@ -7,28 +7,25 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/loaders/GLTFLoader.js"></script>
     <style>
-        body { margin: 0; overflow: hidden; background: #dcdcdc; font-family: sans-serif; cursor: crosshair; }
-        #ui-sidebar { 
-            position: fixed; top: 0; left: 0; width: 170px; height: 100vh; 
-            background: rgba(255,255,255,0.9); border-right: 1px solid #ccc;
-            display: flex; flex-direction: column; gap: 4px; padding: 10px;
-            overflow-y: auto; z-index: 100; box-sizing: border-box;
+        body { margin: 0; overflow: hidden; background: #dcdcdc; font-family: sans-serif; }
+        #overlay { 
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: white; background: rgba(0,0,0,0.5); padding: 20px; border-radius: 10px;
+            text-align: center; pointer-events: none; z-index: 200;
         }
-        #ui-sidebar button { width: 100%; padding: 6px; background: #fff; border: 1px solid #999; border-radius: 4px; font-size: 10px; cursor: pointer; }
+        #monitor { position: fixed; top: 10px; left: 10px; font-size: 11px; color: #444; pointer-events: none; }
     </style>
 </head>
 <body>
-    <div id="ui-sidebar"></div>
+    <div id="overlay">Click to Start / Lock Cursor<br>(Esc to Exit)</div>
+    <div id="monitor">System Ready.</div>
 
     <script>
         let scene, camera, renderer, clock, mixer, model;
         let moveState = { q: false, e: false, c: false, s: false };
         let velocityY = 0, isJumping = false;
         let actions = {}, currentAction;
-
-        // 視点管理用
-        let cameraAzimuth = 0; // 左右回転
-        let cameraElevation = 0.3; // 上下角度
+        let cameraAzimuth = 0, cameraElevation = 0.2;
 
         function fadeToAction(name, duration = 0.2) {
             const nextAction = actions[name];
@@ -51,6 +48,12 @@
             scene.add(new THREE.HemisphereLight(0xffffff, 0x888888, 1.5));
             scene.add(new THREE.GridHelper(200, 200, 0x999999, 0xcccccc));
 
+            // ポインターロックの開始設定
+            document.body.addEventListener('click', () => {
+                document.body.requestPointerLock();
+                document.getElementById('overlay').style.display = 'none';
+            });
+
             const loader = new THREE.GLTFLoader();
             loader.load('./m.glb', (gltf) => {
                 model = gltf.scene;
@@ -62,42 +65,31 @@
                         animGltf.animations.forEach((clip, i) => {
                             clip.tracks = clip.tracks.filter(t => !t.name.endsWith('.position'));
                             const action = mixer.clipAction(clip);
-                            const keyName = `${url.replace('./','')}_${clip.name || i}`;
-                            actions[keyName] = action;
                             if (clip.name.includes("Walk_Loop")) actions['walk'] = action;
                             if (url === './a.glb' && i === 0) actions['idle'] = action;
-
-                            const btn = document.createElement('button');
-                            btn.innerText = keyName;
-                            btn.onclick = () => fadeToAction(keyName);
-                            document.getElementById('ui-sidebar').appendChild(btn);
                         });
                         if (actions['idle']) fadeToAction('idle');
                     });
                 });
             });
 
-            // フォートナイト風：マウス移動で視点回転
+            // マウス移動（ポインターロック中のみ無限回転可能）
             window.addEventListener('mousemove', (e) => {
-                const sensitivity = 0.003;
-                cameraAzimuth -= e.movementX * sensitivity;
-                cameraElevation = Math.max(-0.5, Math.min(1.0, cameraElevation + e.movementY * sensitivity));
+                if (document.pointerLockElement === document.body) {
+                    const sensitivity = 0.002;
+                    cameraAzimuth -= e.movementX * sensitivity;
+                    cameraElevation = Math.max(-0.4, Math.min(1.2, cameraElevation + e.movementY * sensitivity));
+                }
             });
 
             window.onkeydown = (e) => {
                 const k = e.key.toLowerCase();
-                if (k === 'e') moveState.e = true;
-                if (k === 's') moveState.s = true;
-                if (k === 'q') moveState.q = true;
-                if (k === 'c') moveState.c = true;
+                if (['e','s','q','c'].includes(k)) moveState[k] = true;
                 if (k === ' ' && !isJumping) { isJumping = true; velocityY = 0.15; }
             };
             window.onkeyup = (e) => {
                 const k = e.key.toLowerCase();
-                if (k === 'e') moveState.e = false;
-                if (k === 's') moveState.s = false;
-                if (k === 'q') moveState.q = false;
-                if (k === 'c') moveState.c = false;
+                if (['e','s','q','c'].includes(k)) moveState[k] = false;
             };
 
             clock = new THREE.Clock();
@@ -111,22 +103,23 @@
                     let inputX = 0; // 左右
                     let inputZ = 0; // 前後
 
-                    if (moveState.e) inputZ += 1; // 修正：前へ
-                    if (moveState.s) inputZ -= 1; // 修正：後ろへ
-                    if (moveState.q) inputX += 1; // 修正：左へ
-                    if (moveState.c) inputX -= 1; // 修正：右へ
+                    // 方向を完全に反転修正
+                    if (moveState.e) inputZ -= 1; // 修正：奥へ
+                    if (moveState.s) inputZ += 1; // 修正：手前へ
+                    if (moveState.q) inputX -= 1; // 修正：左へ
+                    if (moveState.c) inputX += 1; // 修正：右へ
 
                     if (inputX !== 0 || inputZ !== 0) {
                         const moveAngle = Math.atan2(inputX, inputZ);
                         const targetRotation = moveAngle + cameraAzimuth;
 
-                        // スムーズ回転
                         let diff = targetRotation - model.rotation.y;
                         while (diff < -Math.PI) diff += Math.PI * 2;
                         while (diff > Math.PI) diff -= Math.PI * 2;
                         model.rotation.y += diff * 0.15;
 
                         const speed = 0.1;
+                        // 進行方向の計算
                         model.position.x += Math.sin(model.rotation.y) * speed;
                         model.position.z += Math.cos(model.rotation.y) * speed;
 
@@ -141,11 +134,10 @@
                         if (model.position.y <= 0) { model.position.y = 0; isJumping = false; }
                     }
 
-                    // カメラの追従計算（キャラの後方・上方に配置）
                     const dist = 5;
                     camera.position.set(
                         model.position.x + dist * Math.sin(cameraAzimuth) * Math.cos(cameraElevation),
-                        model.position.y + 1.5 + dist * Math.sin(cameraElevation),
+                        model.position.y + 1.8 + dist * Math.sin(cameraElevation),
                         model.position.z + dist * Math.cos(cameraAzimuth) * Math.cos(cameraElevation)
                     );
                     camera.lookAt(model.position.x, model.position.y + 1.2, model.position.z);
