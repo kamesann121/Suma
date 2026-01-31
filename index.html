@@ -2,30 +2,29 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>新しいタブ</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/loaders/GLTFLoader.js"></script>
     <style>
-        body { margin: 0; overflow: hidden; background: #dcdcdc; font-family: sans-serif; }
-        #overlay { 
-            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            color: white; background: rgba(0,0,0,0.7); padding: 25px; border-radius: 12px;
-            text-align: center; pointer-events: none; z-index: 200; font-weight: bold;
-        }
+        body { margin: 0; overflow: hidden; background: #222; }
+        #overlay { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); color: white; background: rgba(0,0,0,0.8); padding: 20px; border-radius: 10px; pointer-events: none; z-index: 100; text-align: center; }
     </style>
 </head>
 <body>
-    <div id="overlay">CLICK TO START<br>Physics: Raycast Grounding Active</div>
+    <div id="overlay">CLICK TO START<br>Physics Logic: Ground Clamping Active</div>
 
     <script>
-        let scene, camera, renderer, clock, mixer, model, raycaster;
+        let scene, camera, renderer, clock, mixer, model;
         let moveState = { q: false, e: false, c: false, s: false };
         let velocityY = 0, isJumping = false, canJump = true;
         let isCrouching = false;
         let actions = {}, currentAction;
         let cameraAzimuth = 0, cameraElevation = 0.2;
-        let floor; // 地面判定用
+
+        // 物理パラメータ
+        const GRAVITY = -0.012; // 重力の強さ
+        const TERMINAL_VELOCITY = -0.5; // 落下速度の限界
+        const GROUND_Y = 0; // 地面の高さ
 
         function fadeToAction(name, duration = 0.2) {
             const nextAction = actions[name];
@@ -38,28 +37,16 @@
 
         window.onload = function() {
             scene = new THREE.Scene();
-            scene.background = new THREE.Color(0xdddddd);
+            scene.background = new THREE.Color(0x333333);
             camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
-            
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             document.body.appendChild(renderer.domElement);
 
-            scene.add(new THREE.HemisphereLight(0xffffff, 0x888888, 1.5));
-            
-            // 地面（透明なコライダーとして作成）
-            const floorGeo = new THREE.PlaneGeometry(1000, 1000);
-            floorGeo.rotateX(-Math.PI / 2);
-            floor = new THREE.Mesh(floorGeo, new THREE.MeshStandardMaterial({ color: 0x999999, side: THREE.DoubleSide }));
-            scene.add(floor);
-            scene.add(new THREE.GridHelper(500, 100));
+            scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1.2));
+            scene.add(new THREE.GridHelper(500, 100, 0x555555, 0x444444));
 
-            raycaster = new THREE.Raycaster();
-
-            document.body.addEventListener('click', () => {
-                document.body.requestPointerLock();
-                document.getElementById('overlay').style.display = 'none';
-            });
+            document.body.addEventListener('click', () => document.body.requestPointerLock());
 
             const loader = new THREE.GLTFLoader();
             loader.load('./m.glb', (gltf) => {
@@ -100,7 +87,7 @@
                 if (['e','s','q','c'].includes(k)) moveState[k] = true;
                 if (k === 'v') isCrouching = !isCrouching;
                 if (k === ' ' && !isJumping && canJump) { 
-                    isJumping = true; canJump = false; velocityY = 0.18; 
+                    isJumping = true; canJump = false; velocityY = 0.22; 
                     fadeToAction('jump_start', 0.1);
                 }
             };
@@ -117,17 +104,14 @@
                 if (mixer) mixer.update(delta);
 
                 if (model) {
-                    let inputX = 0, inputZ = 0;
-                    if (moveState.e) inputZ -= 1;
-                    if (moveState.s) inputZ += 1;
-                    if (moveState.q) inputX -= 1;
-                    if (moveState.c) inputX += 1;
+                    // --- 移動処理 ---
+                    let inputX = (moveState.q ? -1 : 0) + (moveState.c ? 1 : 0);
+                    let inputZ = (moveState.e ? -1 : 0) + (moveState.s ? 1 : 0);
 
-                    const isMoving = (inputX !== 0 || inputZ !== 0);
-                    if (isMoving) {
-                        const targetRotation = Math.atan2(inputX, inputZ) + cameraAzimuth;
-                        model.rotation.y += (targetRotation - model.rotation.y) * 0.15;
-                        let speed = (moveState.e && !isCrouching && !moveState.q && !moveState.c) ? 0.14 : 0.07;
+                    if (inputX !== 0 || inputZ !== 0) {
+                        const targetRot = Math.atan2(inputX, inputZ) + cameraAzimuth;
+                        model.rotation.y += (targetRot - model.rotation.y) * 0.15;
+                        let speed = (moveState.e && !isCrouching && !moveState.q && !moveState.c) ? 0.16 : 0.08;
                         model.position.x += Math.sin(model.rotation.y) * speed;
                         model.position.z += Math.cos(model.rotation.y) * speed;
                         if (!isJumping) fadeToAction(isCrouching ? 'crouch_walk' : (speed > 0.1 ? 'run' : 'walk'), 0.2);
@@ -135,36 +119,24 @@
                         if (!isJumping) fadeToAction(isCrouching ? 'crouch_idle' : 'idle', 0.2);
                     }
 
-                    // --- 物理演算：ジャンプと接地処理 ---
-                    if (isJumping) {
-                        model.position.y += velocityY;
-                        velocityY -= 0.008; // 重力
-                    }
+                    // --- 【物理演算コア】重力と接地判定 ---
+                    velocityY = Math.max(TERMINAL_VELOCITY, velocityY + GRAVITY);
+                    model.position.y += velocityY;
 
-                    // レイキャストで地面を検知
-                    const rayPos = model.position.clone();
-                    rayPos.y += 1; // 少し高い位置から光線を出す
-                    raycaster.set(rayPos, new THREE.Vector3(0, -1, 0));
-                    const intersects = raycaster.intersectObject(floor);
-
-                    if (intersects.length > 0) {
-                        const groundY = intersects[0].point.y;
-                        
-                        // しゃがみ中のモデル浮き補正 (少しだけyを沈ませる)
-                        const offset = isCrouching ? 0.05 : 0; 
-                        
-                        if (model.position.y <= groundY + offset) {
-                            if (isJumping) {
-                                isJumping = false;
-                                fadeToAction('jump_land', 0.1);
-                                setTimeout(() => { canJump = true; }, 300);
-                            }
-                            model.position.y = groundY - offset;
-                            velocityY = 0;
+                    // しゃがみ時は足の判定を深くする（モデルが浮かないように）
+                    const crouchOffset = isCrouching ? 0.15 : 0; 
+                    
+                    if (model.position.y <= GROUND_Y - crouchOffset) {
+                        if (isJumping) {
+                            isJumping = false;
+                            fadeToAction('jump_land', 0.1);
+                            setTimeout(() => { canJump = true; }, 300);
                         }
+                        model.position.y = GROUND_Y - crouchOffset; // 地面に固定
+                        velocityY = 0; // 垂直速度リセット
                     }
-                    // ----------------------------------
 
+                    // カメラ追従
                     const dist = 5;
                     camera.position.set(
                         model.position.x + dist * Math.sin(cameraAzimuth) * Math.cos(cameraElevation),
