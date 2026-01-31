@@ -2,99 +2,85 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>新しいタブ</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/loaders/GLTFLoader.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/cannon-es@0.19.0/dist/cannon-es.js"></script>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
-        #overlay { position: fixed; top: 20px; left: 20px; color: #0f0; background: rgba(0,0,0,0.8); padding: 15px; border-radius: 5px; font-size: 12px; pointer-events: none; }
+        body { margin: 0; overflow: hidden; background: #dcdcdc; font-family: sans-serif; }
+        #overlay { 
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: white; background: rgba(0,0,0,0.7); padding: 25px; border-radius: 12px;
+            text-align: center; pointer-events: none; z-index: 200; font-weight: bold;
+        }
+        #status { position: fixed; bottom: 20px; left: 20px; color: white; background: rgba(0,0,0,0.5); padding: 10px; border-radius: 5px; font-size: 14px; pointer-events: none; }
     </style>
 </head>
 <body>
-    <div id="overlay">
-        SYSTEM UPDATED<br>
-        - Speed: Walk(5) / Run(10) / Crouch(3)<br>
-        - Motion: Crouch priority fix<br>
-        - Vキー: クールタイムなしで即応
-    </div>
+    <div id="overlay">CLICK TO START<br>(V: しゃがみ切替 / E,S,Q,C: 移動 / Space: Jump)</div>
+    <div id="status">Mode: Standing</div>
 
-    <script type="module">
-        import * as CANNON from 'https://cdn.jsdelivr.net/npm/cannon-es@0.19.0/dist/cannon-es.js';
-
+    <script>
         let scene, camera, renderer, clock, mixer, model;
-        let world, characterBody, debugSphere; 
         let moveState = { q: false, e: false, c: false, s: false };
-        let isJumping = false, canJump = true, isCrouching = false;
+        let velocityY = 0, isJumping = false, canJump = true;
+        let isCrouching = false; // しゃがみ状態のトグル管理
         let actions = {}, currentAction;
         let cameraAzimuth = 0, cameraElevation = 0.2;
 
-        const RADIUS = 0.4;
-        const OFFSET_STAND = 0.05;
-        const OFFSET_CROUCH = 0.35; 
-        let currentVisualOffset = OFFSET_STAND;
-        let smoothCameraTargetY = 0;
-
-        function initPhysics() {
-            world = new CANNON.World();
-            world.gravity.set(0, -25, 0); // 重力を少し強めて接地感を出す
-            const floorBody = new CANNON.Body({ mass: 0, shape: new CANNON.Plane() });
-            floorBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
-            world.addBody(floorBody);
-            characterBody = new CANNON.Body({ mass: 1, shape: new CANNON.Sphere(RADIUS), fixedRotation: true, linearDamping: 0.5 });
-            characterBody.position.set(0, 2, 0); 
-            world.addBody(characterBody);
+        function fadeToAction(name, duration = 0.2) {
+            const nextAction = actions[name];
+            if (nextAction && currentAction !== nextAction) {
+                if (currentAction) currentAction.fadeOut(duration);
+                nextAction.reset().setEffectiveTimeScale(1).setEffectiveWeight(1).fadeIn(duration).play();
+                currentAction = nextAction;
+            }
         }
 
         window.onload = function() {
-            initPhysics();
             scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x050505);
+            scene.background = new THREE.Color(0xdddddd);
             camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+            
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             document.body.appendChild(renderer.domElement);
 
-            scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2000, 2000), new THREE.MeshStandardMaterial({ color: 0x111111 })));
-            const grid = new THREE.GridHelper(1000, 200, 0x333333, 0x666666);
-            grid.position.y = -0.01; 
-            scene.add(grid);
-            
-            // 物理デバッグ球
-            debugSphere = new THREE.Mesh(new THREE.SphereGeometry(RADIUS), new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true }));
-            scene.add(debugSphere);
-            scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1.8));
+            scene.add(new THREE.HemisphereLight(0xffffff, 0x888888, 1.5));
+            scene.add(new THREE.GridHelper(500, 100, 0x999999, 0xcccccc));
 
-            document.body.addEventListener('click', () => document.body.requestPointerLock());
+            document.body.addEventListener('click', () => {
+                document.body.requestPointerLock();
+                document.getElementById('overlay').style.display = 'none';
+            });
 
             const loader = new THREE.GLTFLoader();
             loader.load('./m.glb', (gltf) => {
                 model = gltf.scene;
                 scene.add(model);
                 mixer = new THREE.AnimationMixer(model);
+
                 ['./a.glb', './b.glb'].forEach(url => {
                     loader.load(url, (animGltf) => {
-                        animGltf.animations.forEach((clip) => {
+                        const anims = animGltf.animations;
+                        anims.forEach((clip, index) => {
                             clip.tracks = clip.tracks.filter(t => !t.name.endsWith('.position'));
                             const action = mixer.clipAction(clip);
-                            if (clip.name === 'Idle_Loop') actions['idle'] = action;
-                            if (clip.name === 'Walk_Loop') actions['walk'] = action;
-                            if (clip.name === 'Sprint_Loop') actions['run'] = action;
-                            if (clip.name === 'Jump_Start') { action.setLoop(THREE.LoopOnce); action.clampWhenFinished = true; actions['jump_start'] = action; }
-                            if (clip.name === 'Jump_Loop') actions['jump_loop'] = action;
-                            if (clip.name === 'Jump_Land') { action.setLoop(THREE.LoopOnce); action.clampWhenFinished = true; actions['jump_land'] = action; }
-                            
-                            // しゃがみ系の名前判別をより確実に
-                            if (url.includes('b.glb')) {
-                                const n = clip.name.toLowerCase();
-                                if (n.includes('crouch') && (n.includes('walk') || n.includes('run'))) actions['crouch_walk'] = action;
-                                else if (n.includes('crouch')) actions['crouch_idle'] = action;
+                            const name = clip.name;
+
+                            if (name === 'Idle_Loop') actions['idle'] = action;
+                            if (name === 'Walk_Loop') actions['walk'] = action;
+                            if (name === 'Sprint_Loop') actions['run'] = action;
+                            if (name === 'Jump_Start') { actions['jump_start'] = action; action.setLoop(THREE.LoopOnce); action.clampWhenFinished = true; }
+                            if (name === 'Jump_Loop') actions['jump_loop'] = action;
+                            if (name === 'Jump_Land') { actions['jump_land'] = action; action.setLoop(THREE.LoopOnce); action.clampWhenFinished = true; }
+
+                            if (url === './b.glb') {
+                                if (index === 1) actions['crouch_walk'] = action;
+                                if (index === 2) actions['crouch_idle'] = action;
                             }
                         });
-                        if (actions['idle'] && !currentAction) {
-                            currentAction = actions['idle'];
-                            currentAction.play();
-                        }
+                        if (actions['idle']) fadeToAction('idle');
                     });
                 });
             });
@@ -107,102 +93,94 @@
             });
 
             window.onkeydown = (e) => {
+                if (e.repeat) return;
                 const k = e.key.toLowerCase();
-                if (['e', 's', 'q', 'c'].includes(k)) moveState[k] = true;
+                if (['e','s','q','c'].includes(k)) moveState[k] = true;
+
+                // Vキーでしゃがみトグル
                 if (k === 'v') {
                     isCrouching = !isCrouching;
+                    document.getElementById('status').innerText = isCrouching ? "Mode: Crouching" : "Mode: Standing";
                 }
+
                 if (k === ' ' && !isJumping && canJump) { 
-                    characterBody.velocity.y = 10;
-                    isJumping = true; canJump = false;
+                    isJumping = true;
+                    canJump = false; 
+                    velocityY = 0.18; 
                     fadeToAction('jump_start', 0.1);
                 }
             };
 
             window.onkeyup = (e) => {
                 const k = e.key.toLowerCase();
-                if (['e', 's', 'q', 'c'].includes(k)) moveState[k] = false;
+                if (['e','s','q','c'].includes(k)) moveState[k] = false;
             };
 
             clock = new THREE.Clock();
 
-            function fadeToAction(name, duration = 0.15) {
-                const nextAction = actions[name];
-                if (nextAction && currentAction !== nextAction) {
-                    if (currentAction) currentAction.fadeOut(duration);
-                    nextAction.reset().fadeIn(duration).play();
-                    currentAction = nextAction;
-                }
-            }
-
             function animate() {
                 requestAnimationFrame(animate);
-                world.fixedStep();
                 const delta = clock.getDelta();
                 if (mixer) mixer.update(delta);
 
-                if (model && characterBody) {
-                    let inputX = (moveState.q ? -1 : 0) + (moveState.c ? 1 : 0);
-                    let inputZ = (moveState.e ? -1 : 0) + (moveState.s ? 1 : 0);
-                    let isMoving = (inputX !== 0 || inputZ !== 0);
+                if (model) {
+                    let inputX = 0, inputZ = 0;
+                    if (moveState.e) inputZ -= 1;
+                    if (moveState.s) inputZ += 1;
+                    if (moveState.q) inputX -= 1;
+                    if (moveState.c) inputX += 1; // Cキーで右移動
 
-                    // 1. 速度と回転の計算
+                    const isMoving = (inputX !== 0 || inputZ !== 0);
+
                     if (isMoving) {
-                        const targetRot = Math.atan2(inputX, inputZ) + cameraAzimuth;
-                        model.rotation.y += (targetRot - model.rotation.y) * 0.2;
+                        const targetRotation = Math.atan2(inputX, inputZ) + cameraAzimuth;
+                        let diff = targetRotation - model.rotation.y;
+                        while (diff < -Math.PI) diff += Math.PI * 2;
+                        while (diff > Math.PI) diff -= Math.PI * 2;
+                        model.rotation.y += diff * 0.15;
+
+                        // 速度計算：しゃがみ中は常に歩き速度
+                        const onlyForward = (moveState.e && !moveState.s && !moveState.q && !moveState.c);
+                        let speed = (onlyForward && !isCrouching) ? 0.14 : 0.07;
                         
-                        let speed = 0;
-                        if (isCrouching) {
-                            speed = 3.0; // しゃがみ歩き（爆速化）
-                        } else {
-                            // 前進(E)のみなら Run(10)、それ以外は Walk(5)
-                            speed = (moveState.e && !moveState.q && !moveState.c) ? 10.0 : 5.0;
+                        model.position.x += Math.sin(model.rotation.y) * speed;
+                        model.position.z += Math.cos(model.rotation.y) * speed;
+
+                        if (!isJumping) {
+                            if (isCrouching) fadeToAction('crouch_walk', 0.2);
+                            else if (onlyForward) fadeToAction('run', 0.2); 
+                            else fadeToAction('walk', 0.2);
                         }
-                        
-                        characterBody.velocity.x = Math.sin(model.rotation.y) * speed;
-                        characterBody.velocity.z = Math.cos(model.rotation.y) * speed;
                     } else {
-                        characterBody.velocity.x *= 0.5; characterBody.velocity.z *= 0.5;
-                    }
-
-                    // 2. モーション決定ロジック（ここを強化）
-                    if (!isJumping) {
-                        if (isCrouching) {
-                            // しゃがみ時は他の歩き/走りを一切許さない
-                            fadeToAction(isMoving ? 'crouch_walk' : 'crouch_idle', 0.1);
-                        } else {
-                            if (isMoving) {
-                                const currentSpeed = Math.sqrt(characterBody.velocity.x**2 + characterBody.velocity.z**2);
-                                fadeToAction(currentSpeed > 7 ? 'run' : 'walk', 0.2);
-                            } else {
-                                fadeToAction('idle', 0.2);
-                            }
+                        if (!isJumping) {
+                            fadeToAction(isCrouching ? 'crouch_idle' : 'idle', 0.2);
                         }
                     }
 
-                    // 3. 物理同期
-                    const targetOffset = isCrouching ? OFFSET_CROUCH : OFFSET_STAND;
-                    currentVisualOffset += (targetOffset - currentVisualOffset) * 0.15;
-                    debugSphere.position.copy(characterBody.position);
-                    model.position.set(characterBody.position.x, characterBody.position.y - (RADIUS + currentVisualOffset), characterBody.position.z);
+                    if (isJumping) {
+                        model.position.y += velocityY;
+                        velocityY -= 0.008;
+                        if (velocityY < 0 && currentAction === actions['jump_start']) fadeToAction('jump_loop', 0.3);
 
-                    // 4. カメラ
-                    const targetY = model.position.y + 1.2;
-                    smoothCameraTargetY += (targetY - smoothCameraTargetY) * 0.1;
-                    const dist = 6;
+                        if (model.position.y <= 0) {
+                            model.position.y = 0;
+                            isJumping = false;
+                            fadeToAction('jump_land', 0.1);
+                            setTimeout(() => {
+                                canJump = true;
+                                if (isMoving) fadeToAction(isCrouching ? 'crouch_walk' : (moveState.e ? 'run' : 'walk'), 0.2);
+                                else fadeToAction(isCrouching ? 'crouch_idle' : 'idle', 0.2);
+                            }, 300);
+                        }
+                    }
+
+                    const dist = 5;
                     camera.position.set(
                         model.position.x + dist * Math.sin(cameraAzimuth) * Math.cos(cameraElevation),
-                        smoothCameraTargetY + 1.0 + dist * Math.sin(cameraElevation),
+                        model.position.y + 1.8 + dist * Math.sin(cameraElevation),
                         model.position.z + dist * Math.cos(cameraAzimuth) * Math.cos(cameraElevation)
                     );
-                    camera.lookAt(model.position.x, smoothCameraTargetY, model.position.z);
-
-                    // 5. 接地判定
-                    if (isJumping && characterBody.position.y <= RADIUS + 0.1) {
-                        isJumping = false;
-                        fadeToAction('jump_land', 0.1);
-                        setTimeout(() => { canJump = true; }, 300);
-                    }
+                    camera.lookAt(model.position.x, model.position.y + 1.2, model.position.z);
                 }
                 renderer.render(scene, camera);
             }
