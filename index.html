@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>3D Character Game - Shoulder View</title>
+    <title>新しいタブ</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/loaders/GLTFLoader.js"></script>
     <style>
@@ -14,11 +14,18 @@
             text-align: center; pointer-events: none; z-index: 200; font-weight: bold;
         }
         #status { position: fixed; bottom: 20px; left: 20px; color: white; background: rgba(0,0,0,0.5); padding: 10px; border-radius: 5px; font-size: 14px; pointer-events: none; }
+        /* ついでに画面中央にレティクル（照準）を表示するためのCSSを追加 */
+        #reticle {
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 10px; height: 10px; border: 2px solid rgba(255,255,255,0.8);
+            border-radius: 50%; pointer-events: none; z-index: 100;
+        }
     </style>
 </head>
 <body>
     <div id="overlay">CLICK TO START<br>(V: しゃがみ切替 / E,S,Q,C: 移動 / Space: Jump)</div>
     <div id="status">Mode: Standing</div>
+    <div id="reticle"></div>
 
     <script>
         let scene, camera, renderer, clock, mixer, model;
@@ -88,7 +95,8 @@
             window.addEventListener('mousemove', (e) => {
                 if (document.pointerLockElement === document.body) {
                     cameraAzimuth -= e.movementX * 0.002;
-                    cameraElevation = Math.max(-0.6, Math.min(1.0, cameraElevation + e.movementY * 0.002));
+                    // 上下の視点移動制限を少し広げました
+                    cameraElevation = Math.max(-0.7, Math.min(1.1, cameraElevation + e.movementY * 0.002));
                 }
             });
 
@@ -172,31 +180,31 @@
                         model.position.y += (targetY - model.position.y) * 0.1;
                     }
 
-                    // --- TPSカメラ（フォートナイト風）の制御 ---
-                    const camDist = 2.5;     // モデルとの距離（近づけました）
-                    const camSide = 0.6;     // 右へのオフセット量
-                    const camHeight = 1.5;   // 注視点の高さ
+                    // --- さらに右へ寄せたTPSカメラ制御 ---
+                    const camDist = 2.0;     // キャラに近づける
+                    const camSide = 1.4;     // さらに右（合計1.4）
+                    const camHeight = 1.4;   // 肩の高さ
 
-                    // カメラの水平・垂直方向の計算
                     const horizontalDist = camDist * Math.cos(cameraElevation);
                     const verticalDist = camDist * Math.sin(cameraElevation);
 
-                    // 基本の背面位置
+                    // 背面基本位置
                     let camPosX = model.position.x + horizontalDist * Math.sin(cameraAzimuth);
                     let camPosZ = model.position.z + horizontalDist * Math.cos(cameraAzimuth);
                     let camPosY = model.position.y + camHeight + verticalDist;
 
-                    // さらに右へずらす（カメラの右方向ベクトルを計算して加算）
+                    // 右方向へのオフセット
                     camPosX += Math.cos(cameraAzimuth) * camSide;
                     camPosZ -= Math.sin(cameraAzimuth) * camSide;
 
                     camera.position.set(camPosX, camPosY, camPosZ);
 
-                    // 視点はキャラクターの少し右側（肩越し）を狙う
+                    // 視点はレティクル（中央）に合わせて前方を向く
+                    const lookDistance = 10; // どのくらい先を見るか
                     const lookTarget = new THREE.Vector3(
-                        model.position.x + Math.cos(cameraAzimuth) * (camSide * 0.5),
-                        model.position.y + camHeight,
-                        model.position.z - Math.sin(cameraAzimuth) * (camSide * 0.5)
+                        camPosX - Math.sin(cameraAzimuth) * lookDistance,
+                        camPosY - Math.sin(cameraElevation) * lookDistance,
+                        camPosZ - Math.cos(cameraAzimuth) * lookDistance
                     );
                     camera.lookAt(lookTarget);
                 }
