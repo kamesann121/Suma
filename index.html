@@ -8,14 +8,16 @@
     <script src="https://cdn.jsdelivr.net/npm/cannon-es@0.19.0/dist/cannon-es.js"></script>
     <style>
         body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
-        #overlay { position: fixed; top: 20px; left: 20px; color: #0f0; background: rgba(0,0,0,0.8); padding: 15px; border-radius: 5px; font-size: 12px; pointer-events: none; }
+        #overlay { position: fixed; top: 20px; left: 20px; color: #0f0; background: rgba(0,0,0,0.8); padding: 15px; border-radius: 5px; font-size: 14px; pointer-events: none; line-height: 1.5; }
     </style>
 </head>
 <body>
     <div id="overlay">
-        SMOOTH CAMERA ACTIVE<br>
-        - しゃがみ時のカメラ移動を滑らかにしました<br>
-        - V: しゃがみ / Space: ジャンプ
+        【調整モード】<br>
+        - キーボード <b>↑</b> : モデルを上げる<br>
+        - キーボード <b>↓</b> : モデルを下げる<br>
+        - 現在の OFFSET: <span id="val">0.4</span><br>
+        <small>足が着いたらこの数値をコードに反映してください</small>
     </div>
 
     <script type="module">
@@ -28,11 +30,10 @@
         let actions = {}, currentAction;
         let cameraAzimuth = 0, cameraElevation = 0.2;
 
-        // --- 物理と見た目の調整変数 ---
-        const RADIUS = 0.4;        
-        let MODEL_OFFSET = 0.4;    // 足が埋まるならここを減らす、浮くなら増やす
-        let smoothCameraTargetY = 0; // カメラが追いかける滑らかな高さ
-        // -----------------------
+        // --- 調整用変数 ---
+        const RADIUS = 0.4;
+        let MODEL_OFFSET = 0.4; // ここをキー操作で動かします
+        let smoothCameraTargetY = 0;
 
         function fadeToAction(name, duration = 0.2) {
             const nextAction = actions[name];
@@ -69,16 +70,11 @@
             renderer.setSize(window.innerWidth, window.innerHeight);
             document.body.appendChild(renderer.domElement);
 
-            const floorGeo = new THREE.PlaneGeometry(1000, 1000);
-            const floorMat = new THREE.MeshStandardMaterial({ color: 0x222222 });
-            const floorMesh = new THREE.Mesh(floorGeo, floorMat);
-            floorMesh.rotation.x = -Math.PI / 2;
-            scene.add(floorMesh);
+            scene.add(new THREE.Mesh(new THREE.PlaneGeometry(1000, 1000), new THREE.MeshStandardMaterial({ color: 0x222222 })));
             scene.add(new THREE.GridHelper(1000, 1000, 0x444444, 0x888888));
-
-            const debugGeo = new THREE.SphereGeometry(RADIUS);
-            const debugMat = new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true });
-            debugSphere = new THREE.Mesh(debugGeo, debugMat);
+            
+            // デバッグ球
+            debugSphere = new THREE.Mesh(new THREE.SphereGeometry(RADIUS), new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true }));
             scene.add(debugSphere);
 
             scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1.5));
@@ -90,7 +86,6 @@
                 model = gltf.scene;
                 scene.add(model);
                 mixer = new THREE.AnimationMixer(model);
-
                 ['./a.glb', './b.glb'].forEach(url => {
                     loader.load(url, (animGltf) => {
                         animGltf.animations.forEach((clip, index) => {
@@ -120,15 +115,24 @@
             });
 
             window.onkeydown = (e) => {
-                const k = e.key.toLowerCase();
-                if (['e', 's', 'q', 'c'].includes(k)) moveState[k] = true;
-                if (k === 'v') isCrouching = !isCrouching;
+                const k = e.key;
+                if (['e', 's', 'q', 'c'].includes(k.toLowerCase())) moveState[k.toLowerCase()] = true;
+                if (k.toLowerCase() === 'v') isCrouching = !isCrouching;
                 if (k === ' ' && !isJumping && canJump) { 
                     characterBody.velocity.y = 8;
                     isJumping = true; canJump = false;
                     fadeToAction('jump_start', 0.1);
                 }
+
+                // リアルタイム調整用
+                if (k === 'ArrowUp') { MODEL_OFFSET -= 0.05; updateUI(); }
+                if (k === 'ArrowDown') { MODEL_OFFSET += 0.05; updateUI(); }
             };
+
+            function updateUI() {
+                document.getElementById('val').innerText = MODEL_OFFSET.toFixed(2);
+            }
+
             window.onkeyup = (e) => {
                 const k = e.key.toLowerCase();
                 if (['e', 's', 'q', 'c'].includes(k)) moveState[k] = false;
@@ -154,26 +158,19 @@
                         characterBody.velocity.z = Math.cos(model.rotation.y) * speed;
                         if (!isJumping) fadeToAction(isCrouching ? 'crouch_walk' : (speed > 4 ? 'run' : 'walk'), 0.2);
                     } else {
-                        characterBody.velocity.x *= 0.8;
-                        characterBody.velocity.z *= 0.8;
+                        characterBody.velocity.x *= 0.8; characterBody.velocity.z *= 0.8;
                         if (!isJumping) fadeToAction(isCrouching ? 'crouch_idle' : 'idle', 0.2);
                     }
 
                     debugSphere.position.copy(characterBody.position);
                     
+                    // 同期計算：埋まっている場合は MODEL_OFFSET を減らす（マイナスにする）必要があるかもしれません
                     let verticalAdjustment = RADIUS + MODEL_OFFSET; 
                     if (isCrouching) verticalAdjustment += 0.25; 
 
-                    model.position.set(
-                        characterBody.position.x,
-                        characterBody.position.y - verticalAdjustment, 
-                        characterBody.position.z
-                    );
+                    model.position.set(characterBody.position.x, characterBody.position.y - verticalAdjustment, characterBody.position.z);
 
-                    // --- カメラのスムーズ処理 ---
-                    // 目標となる高さ（モデルの頭のあたり）
                     const targetY = model.position.y + 1.2;
-                    // 現在の滑らかな高さから、目標の高さへじわじわ近づける (Lerp)
                     smoothCameraTargetY += (targetY - smoothCameraTargetY) * 0.1;
 
                     const dist = 5;
@@ -183,7 +180,6 @@
                         model.position.z + dist * Math.cos(cameraAzimuth) * Math.cos(cameraElevation)
                     );
                     camera.lookAt(model.position.x, smoothCameraTargetY, model.position.z);
-                    // --------------------------
 
                     if (isJumping && characterBody.position.y <= RADIUS + 0.1) {
                         isJumping = false;
