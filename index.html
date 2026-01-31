@@ -2,148 +2,249 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>あ</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>新しいタブ</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/loaders/GLTFLoader.js"></script>
     <style>
-        body { margin: 0; overflow: hidden; background: #222; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-        
-        /* 左側のボタンリスト */
-        #debug-panel {
-            position: fixed; left: 0; top: 0; bottom: 0; width: 280px;
-            background: rgba(0, 0, 0, 0.9); color: white; overflow-y: auto;
-            padding: 15px; z-index: 1000; border-right: 2px solid #ffaa00;
+        body { margin: 0; overflow: hidden; background: #dcdcdc; font-family: sans-serif; }
+        #overlay { 
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: white; background: rgba(0,0,0,0.7); padding: 25px; border-radius: 12px;
+            text-align: center; pointer-events: none; z-index: 200; font-weight: bold;
         }
-        
-        h3 { font-size: 14px; color: #ffaa00; border-bottom: 1px solid #444; padding-bottom: 10px; }
-        
-        .file-section { margin-bottom: 20px; }
-        .file-name { font-size: 12px; background: #333; padding: 5px; margin-bottom: 5px; display: block; }
-        
-        .anim-button {
-            display: block; width: 100%; padding: 10px; margin-bottom: 4px;
-            background: #444; color: #fff; border: none; text-align: left;
-            font-size: 11px; cursor: pointer; border-radius: 4px;
-            transition: background 0.2s;
+        #status { position: fixed; bottom: 20px; left: 20px; color: white; background: rgba(0,0,0,0.5); padding: 10px; border-radius: 5px; font-size: 14px; pointer-events: none; }
+        #inventory { position: fixed; bottom: 20px; right: 20px; display: flex; gap: 10px; z-index: 300; }
+        .slot {
+            width: 60px; height: 60px; background: rgba(0, 0, 0, 0.6); border: 2px solid #555; border-radius: 8px;
+            display: flex; align-items: center; justify-content: center; color: white; font-size: 10px; font-weight: bold; position: relative;
         }
-        
-        .anim-button:hover { background: #666; }
-        .anim-button.active { background: #ffaa00; color: #000; font-weight: bold; }
-
-        /* 現在の情報の表示 */
-        #status-display {
-            position: fixed; top: 20px; right: 20px; 
-            background: rgba(0,0,0,0.7); color: #00ff00; padding: 15px;
-            border-radius: 8px; font-family: monospace; font-size: 16px;
-            pointer-events: none; border: 1px solid #00ff00;
-        }
+        .slot.active { border-color: #ffaa00; background: rgba(255, 170, 0, 0.4); }
+        .slot::after { content: attr(data-key); position: absolute; top: 2px; left: 4px; color: #aaa; }
     </style>
 </head>
 <body>
+    <div id="overlay">CLICK TO START<br>(1-3: 武器切替 / 左クリック: 攻撃 / V: しゃがみ / Space: Jump)</div>
+    <div id="status">Mode: Standing | Equip: Bare Hands</div>
 
-    <div id="debug-panel">
-        <h3>Animation Inspector</h3>
-        <div id="controls-container">
-            </div>
-    </div>
-
-    <div id="status-display">
-        Waiting for selection...
+    <div id="inventory">
+        <div class="slot active" data-key="1" id="slot-1">殴り</div>
+        <div class="slot" data-key="2" id="slot-2">剣</div>
+        <div class="slot" data-key="3" id="slot-3">魔法</div>
     </div>
 
     <script>
         let scene, camera, renderer, clock, mixer, model;
-        let actions = {};
-        let currentAction;
+        let moveState = { q: false, e: false, c: false, s: false };
+        let velocityY = 0, isJumping = false, canJump = true;
+        let isCrouching = false, isAttacking = false;
+        let currentEquip = 1; 
+        let actions = {}, currentAction;
+        let cameraAzimuth = 0, cameraElevation = 0.2;
+
+        function fadeToAction(name, duration = 0.2) {
+            const nextAction = actions[name];
+            if (nextAction && currentAction !== nextAction) {
+                if (currentAction) currentAction.fadeOut(duration);
+                nextAction.reset().setEffectiveTimeScale(1).setEffectiveWeight(1).fadeIn(duration).play();
+                currentAction = nextAction;
+            }
+        }
+
+        // 武器切り替え（魔法の解除モーション対応）
+        async function changeEquip(newSlot) {
+            if (currentEquip === newSlot || isAttacking) return;
+
+            if (currentEquip === 3) {
+                fadeToAction('magic_end', 0.2);
+                await new Promise(r => setTimeout(r, 400));
+            }
+
+            currentEquip = newSlot;
+            document.querySelectorAll('.slot').forEach(s => s.classList.remove('active'));
+            document.getElementById(`slot-${newSlot}`).classList.add('active');
+            
+            const names = ["", "Bare Hands", "Sword", "Magic"];
+            document.getElementById('status').innerText = `Mode: ${isCrouching ? "Crouching" : "Standing"} | Equip: ${names[newSlot]}`;
+
+            if (newSlot === 3) fadeToAction('magic_start', 0.2);
+        }
+
+        function performAttack() {
+            if (isAttacking || isJumping) return;
+            isAttacking = true;
+
+            let anim = 'punch';
+            if (currentEquip === 2) anim = 'sword_attack';
+            if (currentEquip === 3) anim = 'magic_fire';
+
+            fadeToAction(anim, 0.1);
+            
+            let duration = 800;
+            if (currentEquip === 1) duration = 600;
+            
+            setTimeout(() => {
+                isAttacking = false;
+                // 待機状態へ復帰
+                updateMotion();
+            }, duration);
+        }
+
+        function updateMotion() {
+            if (isAttacking || isJumping) return;
+
+            let inputX = (moveState.q ? -1 : 0) + (moveState.c ? 1 : 0);
+            let inputZ = (moveState.e ? -1 : 0) + (moveState.s ? 1 : 0);
+            const isMoving = (inputX !== 0 || inputZ !== 0);
+
+            if (isMoving) {
+                if (isCrouching) fadeToAction('crouch_walk', 0.2);
+                else if (moveState.e && !moveState.s && !moveState.q && !moveState.c) fadeToAction('run', 0.2);
+                else fadeToAction('walk', 0.2);
+            } else {
+                if (currentEquip === 2) fadeToAction('sword_idle', 0.2);
+                else if (currentEquip === 3) fadeToAction('magic_pose', 0.3);
+                else fadeToAction(isCrouching ? 'crouch_idle' : 'idle', 0.2);
+            }
+        }
 
         window.onload = function() {
             scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x333333);
-            
+            scene.background = new THREE.Color(0xdddddd);
             camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
-            camera.position.set(0, 1.2, 3); // キャラクターが見えやすい位置
-
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             document.body.appendChild(renderer.domElement);
 
-            // 明るくする
-            scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 2.0));
-            scene.add(new THREE.GridHelper(10, 10, 0x555555, 0x333333));
+            scene.add(new THREE.HemisphereLight(0xffffff, 0x888888, 1.5));
+            scene.add(new THREE.GridHelper(500, 100, 0x999999, 0xcccccc));
+
+            document.body.addEventListener('click', () => {
+                if(document.pointerLockElement !== document.body) document.body.requestPointerLock();
+                document.getElementById('overlay').style.display = 'none';
+            });
+
+            document.body.addEventListener('mousedown', (e) => {
+                if (document.pointerLockElement === document.body && e.button === 0) performAttack();
+            });
 
             const loader = new THREE.GLTFLoader();
-
-            // キャラクター本体をロード
             loader.load('./m.glb', (gltf) => {
                 model = gltf.scene;
                 scene.add(model);
                 mixer = new THREE.AnimationMixer(model);
 
-                // 各ファイルを読み込んで、入っているアニメーションをボタン化する
-                const files = [
-                    { name: 'm.glb', url: './m.glb' },
-                    { name: 'a.glb', url: './a.glb' },
-                    { name: 'b.glb', url: './b.glb' }
-                ];
-
-                files.forEach(file => {
-                    const section = document.createElement('div');
-                    section.className = 'file-section';
-                    section.innerHTML = `<span class="file-name">File: ${file.name}</span>`;
-                    document.getElementById('controls-container').appendChild(section);
-
-                    loader.load(file.url, (animGltf) => {
+                ['./a.glb', './b.glb'].forEach(url => {
+                    loader.load(url, (animGltf) => {
                         animGltf.animations.forEach((clip, index) => {
-                            // 識別用のユニークな名前を作成
-                            const uniqueID = `${file.name}_${index}`;
-                            actions[uniqueID] = mixer.clipAction(clip);
+                            clip.tracks = clip.tracks.filter(t => !t.name.endsWith('.position'));
+                            const action = mixer.clipAction(clip);
+                            const name = clip.name;
 
-                            // ボタン作成
-                            const btn = document.createElement('button');
-                            btn.className = 'anim-button';
-                            btn.innerText = `[${index}] ${clip.name}`;
-                            btn.onclick = () => {
-                                // 全ボタンの active クラスを外す
-                                document.querySelectorAll('.anim-button').forEach(b => b.classList.remove('active'));
-                                btn.classList.add('active');
+                            // 基本・ジャンプ
+                            if (name === 'Idle_Loop') actions['idle'] = action;
+                            if (name === 'Walk_Loop') actions['walk'] = action;
+                            if (name === 'Sprint_Loop') actions['run'] = action;
+                            if (name === 'Jump_Start') { actions['jump_start'] = action; action.setLoop(THREE.LoopOnce); action.clampWhenFinished = true; }
+                            if (name === 'Jump_Loop') actions['jump_loop'] = action;
+                            if (name === 'Jump_Land') { actions['jump_land'] = action; action.setLoop(THREE.LoopOnce); action.clampWhenFinished = true; }
+
+                            if (url === './b.glb') {
+                                if (index === 1) actions['crouch_walk'] = action;
+                                if (index === 2) actions['crouch_idle'] = action;
+                                if (index === 25) actions['punch'] = action;
+                                if (index === 42) actions['sword_idle'] = action;
+                                if (index === 40) actions['sword_attack'] = action;
+                                if (index === 33) { actions['magic_start'] = action; action.setLoop(THREE.LoopOnce); action.clampWhenFinished = true; }
+                                if (index === 35) actions['magic_pose'] = action;
+                                if (index === 36) { actions['magic_fire'] = action; action.setLoop(THREE.LoopOnce); action.clampWhenFinished = true; }
+                                if (index === 34) { actions['magic_end'] = action; action.setLoop(THREE.LoopOnce); action.clampWhenFinished = true; }
                                 
-                                playSelected(uniqueID, index, clip.name, file.name);
-                            };
-                            section.appendChild(btn);
+                                if (index === 25 || index === 40) { action.setLoop(THREE.LoopOnce); action.clampWhenFinished = true; }
+                            }
                         });
+                        if (actions['idle']) fadeToAction('idle');
                     });
                 });
             });
 
-            function playSelected(id, index, name, fileName) {
-                // 前のアニメーションを消す
-                if (currentAction) currentAction.fadeOut(0.2);
-                
-                const next = actions[id];
-                next.reset().setEffectiveTimeScale(1).setEffectiveWeight(1).fadeIn(0.2).play();
-                currentAction = next;
+            window.addEventListener('mousemove', (e) => {
+                if (document.pointerLockElement === document.body) {
+                    cameraAzimuth -= e.movementX * 0.002;
+                    cameraElevation = Math.max(-0.4, Math.min(1.2, cameraElevation + e.movementY * 0.002));
+                }
+            });
 
-                // 画面右上に情報を出す
-                document.getElementById('status-display').innerHTML = 
-                    `FILE: ${fileName}<br>INDEX: ${index}<br>NAME: ${name}`;
-                
-                console.log(`Playing: File=${fileName}, Index=${index}, Name=${name}`);
-            }
+            window.onkeydown = (e) => {
+                if (e.repeat) return;
+                const k = e.key.toLowerCase();
+                if (['e','s','q','c'].includes(k)) moveState[k] = true;
+                if (k === 'v') {
+                    isCrouching = !isCrouching;
+                    document.getElementById('status').innerText = `Mode: ${isCrouching ? "Crouching" : "Standing"} | Equip: ${currentEquip}`;
+                }
+                if (k === ' ' && !isJumping && canJump) { 
+                    isJumping = true; canJump = false; velocityY = 0.18; 
+                    fadeToAction('jump_start', 0.1);
+                }
+                if (['1','2','3'].includes(k)) changeEquip(parseInt(k));
+            };
+
+            window.onkeyup = (e) => {
+                const k = e.key.toLowerCase();
+                if (['e','s','q','c'].includes(k)) moveState[k] = false;
+            };
 
             clock = new THREE.Clock();
             function animate() {
                 requestAnimationFrame(animate);
                 const delta = clock.getDelta();
                 if (mixer) mixer.update(delta);
+
+                if (model) {
+                    let inputX = (moveState.q ? -1 : 0) + (moveState.c ? 1 : 0);
+                    let inputZ = (moveState.e ? -1 : 0) + (moveState.s ? 1 : 0);
+                    const isMoving = (inputX !== 0 || inputZ !== 0);
+
+                    if (isMoving && !isAttacking) {
+                        const targetRotation = Math.atan2(inputX, inputZ) + cameraAzimuth;
+                        let diff = targetRotation - model.rotation.y;
+                        while (diff < -Math.PI) diff += Math.PI * 2;
+                        while (diff > Math.PI) diff -= Math.PI * 2;
+                        model.rotation.y += diff * 0.15;
+
+                        let speed = (moveState.e && !isCrouching && !moveState.s && !moveState.q && !moveState.c) ? 0.14 : 0.07;
+                        model.position.x += Math.sin(model.rotation.y) * speed;
+                        model.position.z += Math.cos(model.rotation.y) * speed;
+                    }
+
+                    updateMotion();
+
+                    if (isJumping) {
+                        model.position.y += velocityY;
+                        velocityY -= 0.008;
+                        if (velocityY < 0 && currentAction === actions['jump_start']) fadeToAction('jump_loop', 0.3);
+                        if (model.position.y <= 0) {
+                            model.position.y = 0; isJumping = false;
+                            fadeToAction('jump_land', 0.1);
+                            setTimeout(() => { canJump = true; updateMotion(); }, 300);
+                        }
+                    } else {
+                        const targetY = isCrouching ? -0.4 : 0;
+                        model.position.y += (targetY - model.position.y) * 0.1;
+                    }
+
+                    const dist = 5;
+                    camera.position.set(
+                        model.position.x + dist * Math.sin(cameraAzimuth) * Math.cos(cameraElevation),
+                        model.position.y + 1.8 + dist * Math.sin(cameraElevation),
+                        model.position.z + dist * Math.cos(cameraAzimuth) * Math.cos(cameraElevation)
+                    );
+                    camera.lookAt(model.position.x, model.position.y + 1.2, model.position.z);
+                }
                 renderer.render(scene, camera);
             }
             animate();
-        };
-
-        window.onresize = () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
         };
     </script>
 </body>
