@@ -16,7 +16,7 @@
     </style>
 </head>
 <body>
-    <div id="overlay">CLICK TO START<br>(Esc to Exit Pointer Lock)</div>
+    <div id="overlay">CLICK TO START<br>(E 2度押しでダッシュ / Escで解除)</div>
 
     <script>
         let scene, camera, renderer, clock, mixer, model;
@@ -24,6 +24,10 @@
         let velocityY = 0, isJumping = false;
         let actions = {}, currentAction;
         let cameraAzimuth = 0, cameraElevation = 0.2;
+
+        // Eキーのダブルタップ判定用
+        let lastETime = 0;
+        let isSprinting = false;
 
         function fadeToAction(name, duration = 0.2) {
             const nextAction = actions[name];
@@ -64,7 +68,8 @@
                             const action = mixer.clipAction(clip);
                             const name = clip.name;
 
-                            // 指定されたモーションを登録
+                            if (name === 'Idle_Loop') actions['idle'] = action;
+                            if (name === 'Walk_Loop') actions['walk'] = action;
                             if (name === 'Sprint_Loop') actions['run'] = action;
                             if (name === 'Jump_Start') {
                                 actions['jump_start'] = action;
@@ -77,10 +82,8 @@
                                 action.setLoop(THREE.LoopOnce);
                                 action.clampWhenFinished = true;
                             }
-                            
-                            // 待機は a.glb の最初を仮に使う
-                            if (url === './a.glb' && !actions['idle']) actions['idle'] = action;
                         });
+                        // 優先順位をつけて初期待機を設定
                         if (actions['idle']) fadeToAction('idle');
                     });
                 });
@@ -96,15 +99,29 @@
             window.onkeydown = (e) => {
                 const k = e.key.toLowerCase();
                 if (['e','s','q','c'].includes(k)) moveState[k] = true;
+
+                // Eキーのダブルタップ判定
+                if (k === 'e') {
+                    const currentTime = new Date().getTime();
+                    if (currentTime - lastETime < 300) {
+                        isSprinting = true; // 2度押しでダッシュ
+                    } else {
+                        isSprinting = false; // 通常歩き
+                    }
+                    lastETime = currentTime;
+                }
+
                 if (k === ' ' && !isJumping) { 
                     isJumping = true; 
-                    velocityY = 0.18; // 少し高めに調整
+                    velocityY = 0.18; 
                     fadeToAction('jump_start', 0.1);
                 }
             };
+
             window.onkeyup = (e) => {
                 const k = e.key.toLowerCase();
                 if (['e','s','q','c'].includes(k)) moveState[k] = false;
+                if (k === 'e') isSprinting = false; // Eを離したらダッシュ解除
             };
 
             clock = new THREE.Clock();
@@ -130,13 +147,19 @@
                         while (diff > Math.PI) diff -= Math.PI * 2;
                         model.rotation.y += diff * 0.15;
 
-                        const speed = 0.14;
+                        // 速度とアニメーションの切り替え
+                        let speed = isSprinting ? 0.14 : 0.07;
                         model.position.x += Math.sin(model.rotation.y) * speed;
                         model.position.z += Math.cos(model.rotation.y) * speed;
 
-                        if (!isJumping) fadeToAction('run');
+                        // ★空中でない時だけ移動アニメーションを再生
+                        if (!isJumping) {
+                            if (isSprinting) fadeToAction('run', 0.2); 
+                            else fadeToAction('walk', 0.2);
+                        }
                     } else {
-                        if (!isJumping) fadeToAction('idle');
+                        // ★空中でない時だけ待機アニメーションを再生
+                        if (!isJumping) fadeToAction('idle', 0.2);
                     }
 
                     // ジャンプ/空中ロジック
@@ -144,7 +167,6 @@
                         model.position.y += velocityY;
                         velocityY -= 0.008;
 
-                        // 上昇が終わって下降し始めたらLoopを再生
                         if (velocityY < 0 && currentAction === actions['jump_start']) {
                             fadeToAction('jump_loop', 0.3);
                         }
@@ -154,10 +176,14 @@
                             isJumping = false;
                             fadeToAction('jump_land', 0.1);
                             
-                            // 着地モーションが終わる頃に移動か待機に戻す
                             setTimeout(() => {
-                                if (isMoving) fadeToAction('run', 0.2); else fadeToAction('idle', 0.2);
-                            }, 300);
+                                if (isMoving) {
+                                    if (isSprinting) fadeToAction('run', 0.2);
+                                    else fadeToAction('walk', 0.2);
+                                } else {
+                                    fadeToAction('idle', 0.2);
+                                }
+                            }, 200);
                         }
                     }
 
