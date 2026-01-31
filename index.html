@@ -13,9 +13,9 @@
 </head>
 <body>
     <div id="overlay">
-        PHYSICS ENGINE: SETTLED<br>
-        - 接地オフセット固定完了 (Stand: 0.05 / Crouch: 0.20)<br>
-        - しゃがみ動作を滑らかに補間しました
+        GROUNDING FIX<br>
+        - 白線（グリッド）の浮きを修正しました<br>
+        - しゃがみ沈み込み量を 0.35 に増加
     </div>
 
     <script type="module">
@@ -28,22 +28,14 @@
         let actions = {}, currentAction;
         let cameraAzimuth = 0, cameraElevation = 0.2;
 
-        // --- 確定した調整値 ---
+        // --- 最終調整値 ---
         const RADIUS = 0.4;
         const OFFSET_STAND = 0.05;
-        const OFFSET_CROUCH = 0.20;
-        let currentVisualOffset = OFFSET_STAND; // 現在の見た目上の沈み込み量
+        // しゃがんでも浮くなら、ここをさらに大きくする（例: 0.45）
+        const OFFSET_CROUCH = 0.35; 
+        
+        let currentVisualOffset = OFFSET_STAND;
         let smoothCameraTargetY = 0;
-        // --------------------
-
-        function fadeToAction(name, duration = 0.2) {
-            const nextAction = actions[name];
-            if (nextAction && currentAction !== nextAction) {
-                if (currentAction) currentAction.fadeOut(duration);
-                nextAction.reset().fadeIn(duration).play();
-                currentAction = nextAction;
-            }
-        }
 
         function initPhysics() {
             world = new CANNON.World();
@@ -65,16 +57,21 @@
         window.onload = function() {
             initPhysics();
             scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x111111);
+            scene.background = new THREE.Color(0x050505);
             camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             document.body.appendChild(renderer.domElement);
 
-            const floorMesh = new THREE.Mesh(new THREE.PlaneGeometry(1000, 1000), new THREE.MeshStandardMaterial({ color: 0x222222 }));
+            // 地面メッシュ
+            const floorMesh = new THREE.Mesh(new THREE.PlaneGeometry(1000, 1000), new THREE.MeshStandardMaterial({ color: 0x111111 }));
             floorMesh.rotation.x = -Math.PI / 2;
             scene.add(floorMesh);
-            scene.add(new THREE.GridHelper(1000, 100, 0x444444, 0x333333));
+
+            // 【重要】グリッドが浮かないように y=-0.01 に配置
+            const grid = new THREE.GridHelper(1000, 200, 0x333333, 0x666666);
+            grid.position.y = -0.01; 
+            scene.add(grid);
             
             debugSphere = new THREE.Mesh(new THREE.SphereGeometry(RADIUS), new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true }));
             scene.add(debugSphere);
@@ -90,21 +87,22 @@
                 mixer = new THREE.AnimationMixer(model);
                 ['./a.glb', './b.glb'].forEach(url => {
                     loader.load(url, (animGltf) => {
-                        animGltf.animations.forEach((clip, index) => {
+                        animGltf.animations.forEach((clip) => {
                             clip.tracks = clip.tracks.filter(t => !t.name.endsWith('.position'));
                             const action = mixer.clipAction(clip);
                             if (clip.name === 'Idle_Loop') actions['idle'] = action;
                             if (clip.name === 'Walk_Loop') actions['walk'] = action;
                             if (clip.name === 'Sprint_Loop') actions['run'] = action;
-                            if (clip.name === 'Jump_Start') { actions['jump_start'] = action; action.setLoop(THREE.LoopOnce); action.clampWhenFinished = true; }
+                            if (clip.name === 'Jump_Start') { action.setLoop(THREE.LoopOnce); action.clampWhenFinished = true; actions['jump_start'] = action; }
                             if (clip.name === 'Jump_Loop') actions['jump_loop'] = action;
-                            if (clip.name === 'Jump_Land') { actions['jump_land'] = action; action.setLoop(THREE.LoopOnce); action.clampWhenFinished = true; }
+                            if (clip.name === 'Jump_Land') { action.setLoop(THREE.LoopOnce); action.clampWhenFinished = true; actions['jump_land'] = action; }
                             if (url === './b.glb') {
-                                if (index === 1) actions['crouch_walk'] = action;
-                                if (index === 2) actions['crouch_idle'] = action;
+                                if (clip.name.includes('Crouch_Walk')) actions['crouch_walk'] = action;
+                                if (clip.name.includes('Crouch_Idle')) actions['crouch_idle'] = action;
                             }
                         });
-                        if (actions['idle']) fadeToAction('idle');
+                        if (actions['idle']) actions['idle'].play();
+                        currentAction = actions['idle'];
                     });
                 });
             });
@@ -133,6 +131,15 @@
 
             clock = new THREE.Clock();
 
+            function fadeToAction(name, duration = 0.2) {
+                const nextAction = actions[name];
+                if (nextAction && currentAction !== nextAction) {
+                    if (currentAction) currentAction.fadeOut(duration);
+                    nextAction.reset().fadeIn(duration).play();
+                    currentAction = nextAction;
+                }
+            }
+
             function animate() {
                 requestAnimationFrame(animate);
                 world.fixedStep();
@@ -155,9 +162,9 @@
                         if (!isJumping) fadeToAction(isCrouching ? 'crouch_idle' : 'idle', 0.2);
                     }
 
-                    // --- 滑らかな接地補正 (見た目) ---
+                    // --- 滑らかな接地補正 ---
                     const targetOffset = isCrouching ? OFFSET_CROUCH : OFFSET_STAND;
-                    currentVisualOffset += (targetOffset - currentVisualOffset) * 0.1; // じわっと変化
+                    currentVisualOffset += (targetOffset - currentVisualOffset) * 0.1;
 
                     debugSphere.position.copy(characterBody.position);
                     model.position.set(
@@ -166,7 +173,6 @@
                         characterBody.position.z
                     );
 
-                    // --- カメラのスムーズ処理 ---
                     const targetY = model.position.y + 1.2;
                     smoothCameraTargetY += (targetY - smoothCameraTargetY) * 0.1;
 
