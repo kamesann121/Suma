@@ -3,53 +3,64 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>新しいタブ</title>
+    <title>3D Kinematics Analysis Lab</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     <style>
         body { margin: 0; overflow: hidden; background: #e0e0e0; font-family: sans-serif; }
         #ui-sidebar { 
-            position: fixed; top: 0; left: 0; width: 160px; height: 100vh; 
+            position: fixed; top: 0; left: 0; width: 170px; height: 100vh; 
             background: rgba(255,255,255,0.9); border-right: 1px solid #ccc;
             display: flex; flex-direction: column; gap: 4px; padding: 10px;
             overflow-y: auto; z-index: 100; box-sizing: border-box;
         }
-        #ui-sidebar button { 
-            width: 100%; padding: 8px; background: #fff; border: 1px solid #999; 
-            border-radius: 4px; font-size: 10px; cursor: pointer; text-align: left;
-        }
-        #monitor { position: fixed; top: 10px; left: 170px; font-size: 11px; color: #444; }
-        #guide {
-            position: fixed; bottom: 10px; right: 10px; background: rgba(0,0,0,0.7); color: #fff;
-            padding: 10px; font-size: 12px; border-radius: 5px;
-        }
+        #ui-sidebar button { width: 100%; padding: 6px; background: #fff; border: 1px solid #999; border-radius: 4px; font-size: 10px; cursor: pointer; text-align: left; }
+        #monitor { position: fixed; top: 10px; left: 180px; font-size: 11px; color: #444; pointer-events: none; }
+        #guide { position: fixed; bottom: 10px; right: 10px; background: rgba(0,0,0,0.7); color: #fff; padding: 10px; font-size: 12px; border-radius: 5px; pointer-events: none; }
     </style>
 </head>
 <body>
-    <div id="ui-sidebar"><div style="font-weight:bold;margin-bottom:5px;">Motions</div></div>
-    <div id="monitor">Ready.</div>
-    <div id="guide">E: Forward | S: Back | Q: Left | C: Right | Space: Jump</div>
+    <div id="ui-sidebar"><div style="font-weight:bold;margin-bottom:5px;">Data Items</div></div>
+    <div id="monitor">System: Standby</div>
+    <div id="guide">E,S,Q,C: Move | Space: Jump | Mouse: Rotate Camera</div>
 
     <script>
         const btnContainer = document.getElementById('ui-sidebar');
         function report(msg) { document.getElementById('monitor').innerText = "> " + msg; }
 
-        let scene, camera, renderer, clock, mixer, model;
+        let scene, camera, renderer, clock, mixer, model, controls;
         let moveState = { q: false, e: false, c: false, s: false };
-        let velocityY = 0;
-        let isJumping = false;
+        let velocityY = 0, isJumping = false;
+        let actions = {}; 
+        let currentAction;
+
+        function fadeToAction(name, duration = 0.2) {
+            const nextAction = actions[name];
+            if (nextAction && currentAction !== nextAction) {
+                if (currentAction) currentAction.fadeOut(duration);
+                nextAction.reset().fadeIn(duration).play();
+                currentAction = nextAction;
+            }
+        }
 
         window.onload = function() {
             scene = new THREE.Scene();
             scene.background = new THREE.Color(0xdddddd);
-            
             camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
-            camera.position.set(0, 3, 6); // 少し高めのTPS視点
-            camera.lookAt(0, 1, 0);
-
+            camera.position.set(0, 3, 6);
+            
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             document.body.appendChild(renderer.domElement);
+
+            // マウス操作の追加
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.minDistance = 2;
+            controls.maxDistance = 15;
+            controls.enablePan = false; // キャラから離れないようにパン（並行移動）はオフ
 
             scene.add(new THREE.HemisphereLight(0xffffff, 0x888888, 1.5));
             scene.add(new THREE.GridHelper(100, 100, 0x999999, 0xcccccc));
@@ -58,46 +69,42 @@
 
             loader.load('./m.glb', (gltf) => {
                 model = gltf.scene;
-                // ★向き修正: 前後逆ならここで180度(Math.PI)回転させる
-                model.rotation.y = Math.PI; 
                 scene.add(model);
                 mixer = new THREE.AnimationMixer(model);
-                report("Model M Loaded & Rotated.");
 
                 ['./a.glb', './b.glb'].forEach(url => {
                     loader.load(url, (animGltf) => {
                         animGltf.animations.forEach((clip, i) => {
                             clip.tracks = clip.tracks.filter(t => !t.name.endsWith('.position'));
+                            const action = mixer.clipAction(clip);
+                            const keyName = `${url.replace('./','')}_${clip.name || i}`;
+                            actions[keyName] = action;
+
+                            // ★指定のWalk_Loopを登録
+                            if (clip.name === "Walk_Loop" || keyName.includes("Walk_Loop")) {
+                                actions['walk'] = action;
+                            }
+                            // 待機ポーズ（仮にaの0番）
+                            if (url === './a.glb' && i === 0) actions['idle'] = action;
+
                             const btn = document.createElement('button');
-                            btn.innerText = `${url.replace('./', '')}: ${clip.name || i}`;
-                            btn.onclick = () => {
-                                mixer.stopAllAction();
-                                mixer.clipAction(clip).reset().fadeIn(0.2).play();
-                                report("Play: " + clip.name);
-                            };
+                            btn.innerText = keyName;
+                            btn.onclick = () => fadeToAction(keyName);
                             btnContainer.appendChild(btn);
                         });
+                        if (actions['idle']) fadeToAction('idle');
                     });
                 });
             });
 
             window.onkeydown = (e) => {
                 const k = e.key.toLowerCase();
-                if (k === 'e') moveState.e = true;
-                if (k === 's') moveState.s = true;
-                if (k === 'q') moveState.q = true;
-                if (k === 'c') moveState.c = true;
-                if (k === ' ' && !isJumping) {
-                    isJumping = true;
-                    velocityY = 0.15;
-                }
+                if (['e','s','q','c'].includes(k)) moveState[k] = true;
+                if (k === ' ' && !isJumping) { isJumping = true; velocityY = 0.15; }
             };
             window.onkeyup = (e) => {
                 const k = e.key.toLowerCase();
-                if (k === 'e') moveState.e = false;
-                if (k === 's') moveState.s = false;
-                if (k === 'q') moveState.q = false;
-                if (k === 'c') moveState.c = false;
+                if (['e','s','q','c'].includes(k)) moveState[k] = false;
             };
 
             clock = new THREE.Clock();
@@ -105,26 +112,47 @@
                 requestAnimationFrame(animate);
                 const delta = clock.getDelta();
                 if (mixer) mixer.update(delta);
+                if (controls) controls.update();
 
                 if (model) {
-                    const speed = 0.08;
-                    // 平行移動（translateX / translateZ）
-                    // model.rotation.y = Math.PI なので、移動方向もそれに準じます
-                    if (moveState.e) model.translateZ(speed);  // 前（モデルの向きに対して）
-                    if (moveState.s) model.translateZ(-speed); // 後
-                    if (moveState.q) model.translateX(speed);  // 左（モデルの右側へスライド）
-                    if (moveState.c) model.translateX(-speed); // 右（モデルの左側へスライド）
+                    let moveX = 0;
+                    let moveZ = 0;
+
+                    // キー入力から移動方向を計算
+                    if (moveState.e) moveZ -= 1; // 前
+                    if (moveState.s) moveZ += 1; // 後
+                    if (moveState.q) moveX -= 1; // 左
+                    if (moveState.c) moveX += 1; // 右
+
+                    if (moveX !== 0 || moveZ !== 0) {
+                        // カメラの向きに合わせて移動方向を計算
+                        const angle = Math.atan2(moveX, moveZ);
+                        const cameraAngle = Math.atan2(
+                            camera.position.x - model.position.x,
+                            camera.position.z - model.position.z
+                        );
+                        
+                        // モデルを進行方向に向かせる
+                        model.rotation.y = angle + cameraAngle + Math.PI;
+
+                        // 移動
+                        const speed = 0.08;
+                        model.position.x += Math.sin(angle + cameraAngle) * speed;
+                        model.position.z += Math.cos(angle + cameraAngle) * speed;
+
+                        fadeToAction('walk');
+                    } else {
+                        if (!isJumping) fadeToAction('idle');
+                    }
 
                     if (isJumping) {
                         model.position.y += velocityY;
                         velocityY -= 0.008;
                         if (model.position.y <= 0) { model.position.y = 0; isJumping = false; }
                     }
-                    
-                    // カメラ固定追従（キャラの後ろをキープ）
-                    camera.position.x = model.position.x;
-                    camera.position.z = model.position.z + 6;
-                    camera.lookAt(model.position.x, model.position.y + 1, model.position.z);
+
+                    // カメラをキャラに追従
+                    controls.target.set(model.position.x, model.position.y + 1, model.position.z);
                 }
                 renderer.render(scene, camera);
             }
