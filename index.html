@@ -55,17 +55,15 @@
             });
 
             const loader = new THREE.GLTFLoader();
-            
             loader.load('./m.glb', (gltf) => {
                 model = gltf.scene;
-                // 初期位置を立ち状態のオフセットに設定
-                model.position.y = 0.05;
                 scene.add(model);
                 mixer = new THREE.AnimationMixer(model);
 
                 ['./a.glb', './b.glb'].forEach(url => {
                     loader.load(url, (animGltf) => {
-                        animGltf.animations.forEach((clip, index) => {
+                        const anims = animGltf.animations;
+                        anims.forEach((clip, index) => {
                             clip.tracks = clip.tracks.filter(t => !t.name.endsWith('.position'));
                             const action = mixer.clipAction(clip);
                             const name = clip.name;
@@ -73,9 +71,9 @@
                             if (name === 'Idle_Loop') actions['idle'] = action;
                             if (name === 'Walk_Loop') actions['walk'] = action;
                             if (name === 'Sprint_Loop') actions['run'] = action;
-                            if (name === 'Jump_Start') { action.setLoop(THREE.LoopOnce); action.clampWhenFinished = true; actions['jump_start'] = action; }
+                            if (name === 'Jump_Start') { actions['jump_start'] = action; action.setLoop(THREE.LoopOnce); action.clampWhenFinished = true; }
                             if (name === 'Jump_Loop') actions['jump_loop'] = action;
-                            if (name === 'Jump_Land') { action.setLoop(THREE.LoopOnce); action.clampWhenFinished = true; actions['jump_land'] = action; }
+                            if (name === 'Jump_Land') { actions['jump_land'] = action; action.setLoop(THREE.LoopOnce); action.clampWhenFinished = true; }
 
                             if (url === './b.glb') {
                                 if (index === 1) actions['crouch_walk'] = action;
@@ -104,7 +102,7 @@
                     document.getElementById('status').innerText = isCrouching ? "Mode: Crouching" : "Mode: Standing";
                 }
 
-                if (k === ' ' && !isJumping && canJump && !isCrouching) { 
+                if (k === ' ' && !isJumping && canJump) { 
                     isJumping = true;
                     canJump = false; 
                     velocityY = 0.18; 
@@ -157,15 +155,14 @@
                         }
                     }
 
-                    // --- ジャンプとオフセットの制御 ---
+                    // --- ジャンプとしゃがみの高さ制御 ---
                     if (isJumping) {
                         model.position.y += velocityY;
                         velocityY -= 0.008;
                         if (velocityY < 0 && currentAction === actions['jump_start']) fadeToAction('jump_loop', 0.3);
 
-                        // 着地判定（立ち状態のオフセット 0.05 に戻る）
-                        if (model.position.y <= 0.05) {
-                            model.position.y = 0.05;
+                        if (model.position.y <= 0) {
+                            model.position.y = 0;
                             isJumping = false;
                             fadeToAction('jump_land', 0.1);
                             setTimeout(() => {
@@ -175,10 +172,10 @@
                             }, 300);
                         }
                     } else {
-                        // 指定されたオフセット値を適用
-                        const targetOffset = isCrouching ? 0.20 : 0.05;
-                        // 線形補間で滑らかに高さを変える
-                        model.position.y += (targetOffset - model.position.y) * 0.1;
+                        // ★しゃがみ状態の時に高さを下げる
+                        // -0.4 の値を変更して、足が地面に接する位置に調整してください
+                        const targetY = isCrouching ? -0.4 : 0;
+                        model.position.y += (targetY - model.position.y) * 0.1; // 滑らかに移動
                     }
 
                     const dist = 5;
