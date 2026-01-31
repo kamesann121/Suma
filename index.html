@@ -13,8 +13,8 @@
 </head>
 <body>
     <div id="overlay">
-        CANNON.js PHYSICS ACTIVE<br>
-        - 地面の白線は1m間隔です<br>
+        SMOOTH CAMERA ACTIVE<br>
+        - しゃがみ時のカメラ移動を滑らかにしました<br>
         - V: しゃがみ / Space: ジャンプ
     </div>
 
@@ -28,7 +28,11 @@
         let actions = {}, currentAction;
         let cameraAzimuth = 0, cameraElevation = 0.2;
 
-        const RADIUS = 0.4; 
+        // --- 物理と見た目の調整変数 ---
+        const RADIUS = 0.4;        
+        let MODEL_OFFSET = 0.4;    // 足が埋まるならここを減らす、浮くなら増やす
+        let smoothCameraTargetY = 0; // カメラが追いかける滑らかな高さ
+        // -----------------------
 
         function fadeToAction(name, duration = 0.2) {
             const nextAction = actions[name];
@@ -42,7 +46,6 @@
         function initPhysics() {
             world = new CANNON.World();
             world.gravity.set(0, -20, 0);
-
             const floorBody = new CANNON.Body({ mass: 0, shape: new CANNON.Plane() });
             floorBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
             world.addBody(floorBody);
@@ -53,39 +56,32 @@
                 fixedRotation: true,
                 linearDamping: 0.9
             });
-            characterBody.position.set(0, 5, 0);
+            characterBody.position.set(0, 2, 0); 
             world.addBody(characterBody);
         }
 
         window.onload = function() {
             initPhysics();
             scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x050505);
-            
+            scene.background = new THREE.Color(0x111111);
             camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             document.body.appendChild(renderer.domElement);
 
-            // --- 地面を「アスファルト風」にする ---
-            // 濃い灰色の板
             const floorGeo = new THREE.PlaneGeometry(1000, 1000);
             const floorMat = new THREE.MeshStandardMaterial({ color: 0x222222 });
             const floorMesh = new THREE.Mesh(floorGeo, floorMat);
             floorMesh.rotation.x = -Math.PI / 2;
             scene.add(floorMesh);
+            scene.add(new THREE.GridHelper(1000, 1000, 0x444444, 0x888888));
 
-            // 1m間隔のグリッド（白線）
-            const grid = new THREE.GridHelper(1000, 1000, 0x444444, 0x888888);
-            scene.add(grid);
-
-            // 物理デバッグ球
             const debugGeo = new THREE.SphereGeometry(RADIUS);
             const debugMat = new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true });
             debugSphere = new THREE.Mesh(debugGeo, debugMat);
             scene.add(debugSphere);
 
-            scene.add(new THREE.HemisphereLight(0xffffff, 0x000000, 1.5));
+            scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1.5));
 
             document.body.addEventListener('click', () => document.body.requestPointerLock());
 
@@ -163,11 +159,9 @@
                         if (!isJumping) fadeToAction(isCrouching ? 'crouch_idle' : 'idle', 0.2);
                     }
 
-                    // --- 物理と見た目の同期 ---
                     debugSphere.position.copy(characterBody.position);
                     
-                    // 足元調整
-                    let verticalAdjustment = RADIUS + 0.5; 
+                    let verticalAdjustment = RADIUS + MODEL_OFFSET; 
                     if (isCrouching) verticalAdjustment += 0.25; 
 
                     model.position.set(
@@ -176,20 +170,26 @@
                         characterBody.position.z
                     );
 
-                    // 接地判定
+                    // --- カメラのスムーズ処理 ---
+                    // 目標となる高さ（モデルの頭のあたり）
+                    const targetY = model.position.y + 1.2;
+                    // 現在の滑らかな高さから、目標の高さへじわじわ近づける (Lerp)
+                    smoothCameraTargetY += (targetY - smoothCameraTargetY) * 0.1;
+
+                    const dist = 5;
+                    camera.position.set(
+                        model.position.x + dist * Math.sin(cameraAzimuth) * Math.cos(cameraElevation),
+                        smoothCameraTargetY + 0.6 + dist * Math.sin(cameraElevation),
+                        model.position.z + dist * Math.cos(cameraAzimuth) * Math.cos(cameraElevation)
+                    );
+                    camera.lookAt(model.position.x, smoothCameraTargetY, model.position.z);
+                    // --------------------------
+
                     if (isJumping && characterBody.position.y <= RADIUS + 0.1) {
                         isJumping = false;
                         fadeToAction('jump_land', 0.1);
                         setTimeout(() => { canJump = true; }, 300);
                     }
-
-                    const dist = 5;
-                    camera.position.set(
-                        model.position.x + dist * Math.sin(cameraAzimuth) * Math.cos(cameraElevation),
-                        model.position.y + 1.8 + dist * Math.sin(cameraElevation),
-                        model.position.z + dist * Math.cos(cameraAzimuth) * Math.cos(cameraElevation)
-                    );
-                    camera.lookAt(model.position.x, model.position.y + 1.2, model.position.z);
                 }
                 renderer.render(scene, camera);
             }
