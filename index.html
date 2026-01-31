@@ -7,18 +7,18 @@
     <script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/loaders/GLTFLoader.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/cannon-es@0.19.0/dist/cannon-es.js"></script>
     <style>
-        body { margin: 0; overflow: hidden; background: #111; }
-        #overlay { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); color: white; background: rgba(0,0,0,0.8); padding: 20px; border-radius: 10px; z-index: 100; text-align: center; pointer-events: none; }
+        body { margin: 0; overflow: hidden; background: #000; }
+        #overlay { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); color: white; background: rgba(0,0,0,0.8); padding: 20px; border-radius: 10px; z-index: 100; text-align: center; pointer-events: none; font-family: sans-serif;}
     </style>
 </head>
 <body>
-    <div id="overlay">CLICK TO START<br>Engine: Cannon-es (Real-time Physics)</div>
+    <div id="overlay">CLICK TO START<br>Physics Grounding & Shadows Active</div>
 
     <script type="module">
         import * as CANNON from 'https://cdn.jsdelivr.net/npm/cannon-es@0.19.0/dist/cannon-es.js';
 
         let scene, camera, renderer, clock, mixer, model;
-        let world, characterBody, floorBody; // 物理用
+        let world, characterBody;
         let moveState = { q: false, e: false, c: false, s: false };
         let isJumping = false, canJump = true, isCrouching = false;
         let actions = {}, currentAction;
@@ -34,56 +34,61 @@
         }
 
         function initPhysics() {
-            // 物理世界の作成
             world = new CANNON.World();
-            world.gravity.set(0, -15, 0); // 重力を少し強めに
+            world.gravity.set(0, -18, 0); // 重力
 
-            // 地面の物理体
-            const floorMaterial = new CANNON.Material();
-            floorBody = new CANNON.Body({
-                mass: 0, // 質量0 = 固定された地面
+            const floorBody = new CANNON.Body({
+                mass: 0,
                 shape: new CANNON.Plane(),
-                material: floorMaterial
             });
             floorBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
             world.addBody(floorBody);
 
-            // キャラクターの物理体 (カプセル状の代わりに球体を使用)
-            const charMaterial = new CANNON.Material();
             characterBody = new CANNON.Body({
                 mass: 1,
-                shape: new CANNON.Sphere(0.4), // 衝突判定の大きさ
-                material: charMaterial,
-                fixedRotation: true // キャラが物理で転がらないように
+                shape: new CANNON.Sphere(0.3), // 判定の大きさ
+                fixedRotation: true
             });
-            characterBody.position.set(0, 2, 0);
+            characterBody.position.set(0, 5, 0);
             world.addBody(characterBody);
-
-            // 地面とキャラの摩擦設定
-            const contactMaterial = new CANNON.ContactMaterial(floorMaterial, charMaterial, {
-                friction: 0.1,
-                restitution: 0 // 跳ね返りなし
-            });
-            world.addContactMaterial(contactMaterial);
         }
 
         window.onload = function() {
             initPhysics();
-
             scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xa0a0a0);
+            
             camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true; // 影を有効化
             document.body.appendChild(renderer.domElement);
 
             scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1.2));
-            scene.add(new THREE.GridHelper(500, 100, 0x444444, 0x222222));
+            const sun = new THREE.DirectionalLight(0xffffff, 0.8);
+            sun.position.set(5, 10, 5);
+            sun.castShadow = true;
+            scene.add(sun);
+
+            // --- 地面のテクスチャ作成 (チェッカー柄) ---
+            const size = 1000;
+            const divisions = 1000;
+            const grid = new THREE.GridHelper(size, divisions, 0x888888, 0x444444);
+            scene.add(grid);
+            
+            const planeGeo = new THREE.PlaneGeometry(size, size);
+            const planeMat = new THREE.MeshStandardMaterial({ color: 0x555555 });
+            const floorMesh = new THREE.Mesh(planeGeo, planeMat);
+            floorMesh.rotation.x = -Math.PI / 2;
+            floorMesh.receiveShadow = true;
+            scene.add(floorMesh);
 
             document.body.addEventListener('click', () => document.body.requestPointerLock());
 
             const loader = new THREE.GLTFLoader();
             loader.load('./m.glb', (gltf) => {
                 model = gltf.scene;
+                model.traverse(n => { if(n.isMesh) n.castShadow = true; });
                 scene.add(model);
                 mixer = new THREE.AnimationMixer(model);
 
@@ -120,7 +125,7 @@
                 if (['e','s','q','c'].includes(k)) moveState[k] = true;
                 if (k === 'v') isCrouching = !isCrouching;
                 if (k === ' ' && !isJumping && canJump) { 
-                    characterBody.velocity.y = 7; // 物理的な上方向の速度
+                    characterBody.velocity.y = 8;
                     isJumping = true; canJump = false;
                     fadeToAction('jump_start', 0.1);
                 }
@@ -134,50 +139,44 @@
 
             function animate() {
                 requestAnimationFrame(animate);
-                const delta = clock.getDelta();
-                
-                // 物理ワールドの時間を進める
                 world.fixedStep();
-
+                const delta = clock.getDelta();
                 if (mixer) mixer.update(delta);
 
                 if (model && characterBody) {
-                    // --- 移動処理 (物理ボディの速度を操作) ---
                     let inputX = (moveState.q ? -1 : 0) + (moveState.c ? 1 : 0);
                     let inputZ = (moveState.e ? -1 : 0) + (moveState.s ? 1 : 0);
 
                     if (inputX !== 0 || inputZ !== 0) {
                         const targetRot = Math.atan2(inputX, inputZ) + cameraAzimuth;
                         model.rotation.y += (targetRot - model.rotation.y) * 0.15;
-                        
                         let speed = (moveState.e && !isCrouching && !moveState.q && !moveState.c) ? 6 : 3;
-                        
-                        // 物理ボディの速度を設定
                         characterBody.velocity.x = Math.sin(model.rotation.y) * speed;
                         characterBody.velocity.z = Math.cos(model.rotation.y) * speed;
-                        
                         if (!isJumping) fadeToAction(isCrouching ? 'crouch_walk' : (speed > 4 ? 'run' : 'walk'), 0.2);
                     } else {
-                        characterBody.velocity.x *= 0.9; // 急止まり
-                        characterBody.velocity.z *= 0.9;
+                        characterBody.velocity.x *= 0.8;
+                        characterBody.velocity.z *= 0.8;
                         if (!isJumping) fadeToAction(isCrouching ? 'crouch_idle' : 'idle', 0.2);
                     }
 
-                    // --- 物理とビジュアルの同期 ---
-                    model.position.copy(characterBody.position);
+                    // モデルを物理体に同期
+                    model.position.set(
+                        characterBody.position.x,
+                        characterBody.position.y - 0.3, // 物理球体の中心(0.3m)から地面に合わせる
+                        characterBody.position.z
+                    );
                     
-                    // しゃがみ時のメッシュ沈ませ補正 (これだけは視覚的に必要)
-                    if (isCrouching) model.position.y -= 0.2;
-                    else model.position.y -= 0.4; // 衝突球体の中心から足元へのオフセット
+                    // しゃがみ時はモデルを少しだけ下に下げて接地感を出す
+                    if (isCrouching) model.position.y -= 0.1;
 
-                    // 接地判定 (物理的な高さで判定)
-                    if (isJumping && characterBody.position.y <= 0.41) {
+                    // 接地判定 (物理球体の底が地面 0 に触れているか)
+                    if (isJumping && characterBody.position.y <= 0.31) {
                         isJumping = false;
                         fadeToAction('jump_land', 0.1);
                         setTimeout(() => { canJump = true; }, 300);
                     }
 
-                    // カメラ
                     const dist = 5;
                     camera.position.set(
                         model.position.x + dist * Math.sin(cameraAzimuth) * Math.cos(cameraElevation),
