@@ -92,14 +92,20 @@
 
             const loader = new THREE.GLTFLoader();
 
-            // 1. Pistol.glb のロード
+            // 1. Pistol.glb のロード（サイズを大幅に縮小）
             loader.load('./Pistol.glb', (gltf) => {
                 gun = gltf.scene;
-                // ここでピストルの大きさと向きを仮調整
-                gun.scale.set(0.1, 0.1, 0.1); 
+                
+                // --- 調整エリア ---
+                const s = 0.005; // 0.1の20分の1。まだデカければ 0.001 に。
+                gun.scale.set(s, s, s); 
+                
+                // 銃口を前に向けるための回転調整（モデルによって変えてください）
                 gun.rotation.set(0, Math.PI / 2, 0); 
+                // ----------------
+                
                 gun.visible = false; 
-                console.log("Pistol loaded. Adjust scale/rotation if it looks weird.");
+                console.log("Pistol loaded. Scale set to:", s);
             });
 
             // 2. キャラクターのロード
@@ -113,11 +119,11 @@
                     model.traverse((child) => {
                         if (child.isBone) {
                             const boneName = child.name.toLowerCase();
-                            // 一般的な「Hand」と「R」が含まれるボーンを探す
                             if (boneName.includes("hand") && (boneName.includes("r") || boneName.includes("right"))) {
-                                console.log("Attaching pistol to bone:", child.name);
+                                console.log("Attaching to:", child.name);
                                 child.add(gun);
-                                // 手のひらに位置をリセット
+                                
+                                // 手のひらの中での位置調整（x, y, z）
                                 gun.position.set(0, 0, 0); 
                             }
                         }
@@ -134,7 +140,6 @@
                             if (name === 'Idle_Loop') actions['idle'] = action;
                             if (name === 'Walk_Loop') actions['walk'] = action;
                             if (name === 'Sprint_Loop') actions['run'] = action;
-                            // b.glbの上から20番目 (index 19)
                             if (url === './b.glb' && index === 19) actions['aim_pose'] = action; 
 
                             if (url === './b.glb') {
@@ -218,7 +223,7 @@
                     const targetY = isCrouching ? -0.4 : 0;
                     model.position.y += (targetY - model.position.y) * 0.1;
 
-                    // カメラ計算
+                    // カメラ設定
                     const camDist = 2.4, camSide = 1.0, camHeight = 1.5;
                     const hDist = camDist * Math.cos(cameraElevation);
                     const vDist = camDist * Math.sin(cameraElevation);
