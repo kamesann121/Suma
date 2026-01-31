@@ -7,121 +7,151 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/loaders/GLTFLoader.js"></script>
     <style>
-        body { margin: 0; overflow: hidden; background: #f0f0f0; font-family: sans-serif; }
-        #monitor { 
-            position: fixed; top: 10px; left: 10px; width: 85%; max-height: 20vh; 
-            background: rgba(255,255,255,0.9); color: #444; padding: 10px; font-size: 10px; 
-            z-index: 100; border: 1px solid #ddd; pointer-events: none;
+        body { margin: 0; overflow: hidden; background: #e0e0e0; font-family: sans-serif; }
+        
+        /* 左側のボタン列 */
+        #ui-sidebar { 
+            position: fixed; top: 0; left: 0; width: 160px; height: 100vh; 
+            background: rgba(255,255,255,0.85); border-right: 1px solid #ccc;
+            display: flex; flex-direction: column; gap: 5px; padding: 10px;
+            overflow-y: auto; z-index: 100; box-sizing: border-box;
         }
+        
+        #ui-sidebar button { 
+            width: 100%; padding: 8px; background: #fff; border: 1px solid #999; 
+            border-radius: 4px; font-size: 11px; cursor: pointer; text-align: left;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        #ui-sidebar button:hover { background: #f0f0f0; }
+        #ui-sidebar button:active { background: #ddd; }
+
+        #monitor { 
+            position: fixed; top: 10px; left: 170px; width: 60%; font-size: 10px; color: #666; pointer-events: none;
+        }
+
         #guide {
-            position: fixed; top: 10px; right: 10px; background: rgba(0,0,0,0.7); color: #fff;
-            padding: 10px; font-size: 12px; border-radius: 5px; z-index: 100;
+            position: fixed; bottom: 10px; right: 10px; background: rgba(0,0,0,0.6); color: #fff;
+            padding: 8px 12px; font-size: 12px; border-radius: 4px; pointer-events: none;
         }
     </style>
 </head>
 <body>
-    <div id="monitor">System: Input Mapping Active...</div>
-    <div id="guide">
-        [Q] Left | [E] Forward | [C] Right<br>
-        [S] Back | [Space] Jump
+    <div id="ui-sidebar">
+        <div style="font-weight:bold; font-size:12px; margin-bottom:5px;">Motions</div>
     </div>
+    <div id="monitor">Ready.</div>
+    <div id="guide">E:Forward | Q:Left | C:Right | S:Back | Space:Jump</div>
 
     <script>
-        const logEl = document.getElementById('monitor');
-        function report(msg) { logEl.innerHTML += `<div>> ${msg}</div>`; logEl.scrollTop = logEl.scrollHeight; }
+        const btnContainer = document.getElementById('ui-sidebar');
+        function report(msg) { document.getElementById('monitor').innerText = "> " + msg; }
 
-        let mixer, model, jumpAction;
-        let moveState = { q: false, e: false, c: false, s: false, space: false };
+        let scene, camera, renderer, clock, mixer, model;
+        let moveState = { q: false, e: false, c: false, s: false };
         let velocityY = 0;
         let isJumping = false;
 
         window.onload = function() {
-            const scene = new THREE.Scene();
-            scene.background = new THREE.Color(0xeeeeee);
-            const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xdddddd);
+            
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
             camera.position.set(0, 2, 5);
             camera.lookAt(0, 1, 0);
 
-            const renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             document.body.appendChild(renderer.domElement);
 
-            scene.add(new THREE.HemisphereLight(0xffffff, 0xbbbbbb, 1.5));
-            scene.add(new THREE.GridHelper(20, 20, 0xcccccc, 0xeeeeee));
+            scene.add(new THREE.HemisphereLight(0xffffff, 0x888888, 1.5));
+            scene.add(new THREE.GridHelper(50, 50, 0xaaaaaa, 0xcccccc));
 
             const loader = new THREE.GLTFLoader();
 
-            // モデル読み込み
+            // 1. モデル(m.glb)をロード
             loader.load('./m.glb', (gltf) => {
                 model = gltf.scene;
                 scene.add(model);
                 mixer = new THREE.AnimationMixer(model);
-                report("Model M: Active.");
+                report("Model M Loaded.");
 
-                // アニメーション(a.glb)からジャンプを探す（仮で0番目）
-                loader.load('./a.glb', (anim) => {
-                    if(anim.animations[0]) {
-                        jumpAction = mixer.clipAction(anim.animations[0]);
-                        jumpAction.setLoop(THREE.LoopOnce); // ジャンプは1回だけ
-                        jumpAction.clampWhenFinished = true;
-                        report("Motion A: Sync.");
-                    }
+                // 2. アニメーションファイル(a.glb, b.glb)をロード
+                ['./a.glb', './b.glb'].forEach(url => {
+                    loader.load(url, (animGltf) => {
+                        animGltf.animations.forEach((clip, i) => {
+                            // 腕伸び対策
+                            clip.tracks = clip.tracks.filter(t => !t.name.endsWith('.position'));
+
+                            const btn = document.createElement('button');
+                            const fileName = url.replace('./', '').replace('.glb', '');
+                            btn.innerText = `${fileName}: ${clip.name || i}`;
+                            btn.onclick = () => {
+                                mixer.stopAllAction();
+                                mixer.clipAction(clip).reset().fadeIn(0.2).play();
+                                report("Play: " + clip.name);
+                            };
+                            btnContainer.appendChild(btn);
+                        });
+                    });
                 });
             });
 
-            // キーボード入力検知
-            window.addEventListener('keydown', (e) => {
-                const key = e.key.toLowerCase();
-                if (key === 'q') moveState.q = true;
-                if (key === 'e') moveState.e = true;
-                if (key === 'c') moveState.c = true;
-                if (key === 's') moveState.s = true;
-                if (key === ' ') { // スペース
-                    if (!isJumping) {
-                        isJumping = true;
-                        velocityY = 0.15; // ジャンプ初速
-                        if(jumpAction) { jumpAction.reset().play(); }
-                        report("Action: Vertical Impulse");
-                    }
+            // キー入力
+            window.onkeydown = (e) => {
+                const k = e.key.toLowerCase();
+                if (k === 'e') moveState.e = true;
+                if (k === 's') moveState.s = true;
+                if (k === 'q') moveState.q = true;
+                if (k === 'c') moveState.c = true;
+                if (k === ' ' && !isJumping) {
+                    isJumping = true;
+                    velocityY = 0.15;
+                    report("Action: Jump");
                 }
-            });
+            };
+            window.onkeyup = (e) => {
+                const k = e.key.toLowerCase();
+                if (k === 'e') moveState.e = false;
+                if (k === 's') moveState.s = false;
+                if (k === 'q') moveState.q = false;
+                if (k === 'c') moveState.c = false;
+            };
 
-            window.addEventListener('keyup', (e) => {
-                const key = e.key.toLowerCase();
-                if (key === 'q') moveState.q = false;
-                if (key === 'e') moveState.e = false;
-                if (key === 'c') moveState.c = false;
-                if (key === 's') moveState.s = false;
-            });
-
-            const clock = new THREE.Clock();
-
-            function update() {
+            clock = new THREE.Clock();
+            function animate() {
+                requestAnimationFrame(animate);
                 const delta = clock.getDelta();
                 if (mixer) mixer.update(delta);
 
                 if (model) {
-                    // 移動と回転の処理
-                    if (moveState.e) model.position.z -= 0.05; // 前
-                    if (moveState.s) model.position.z += 0.05; // 後
-                    if (moveState.q) model.rotation.y += 0.05; // 左回転
-                    if (moveState.c) model.rotation.y -= 0.05; // 右回転
+                    // フォートナイト風移動（位置と回転）
+                    if (moveState.e) model.translateZ(-0.06); // 向いている方向に前進
+                    if (moveState.s) model.translateZ(0.06);  // 後退
+                    if (moveState.q) model.rotation.y += 0.04; // 左旋回
+                    if (moveState.c) model.rotation.y -= 0.04; // 右旋回
 
-                    // ジャンプ（重力計算）
+                    // ジャンプ物理
                     if (isJumping) {
                         model.position.y += velocityY;
-                        velocityY -= 0.008; // 重力
+                        velocityY -= 0.008;
                         if (model.position.y <= 0) {
                             model.position.y = 0;
                             isJumping = false;
-                            velocityY = 0;
                         }
                     }
+                    
+                    // カメラをキャラに追従させる（TPS視点）
+                    const relativeCameraOffset = new THREE.Vector3(0, 2, 5);
+                    const cameraOffset = relativeCameraOffset.applyMatrix4(model.matrixWorld);
+                    camera.position.x = cameraOffset.x;
+                    camera.position.y = cameraOffset.y;
+                    camera.position.z = cameraOffset.z;
+                    camera.lookAt(model.position.x, model.position.y + 1, model.position.z);
                 }
+
                 renderer.render(scene, camera);
-                requestAnimationFrame(update);
             }
-            update();
+            animate();
         };
     </script>
 </body>
