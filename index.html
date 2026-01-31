@@ -8,39 +8,27 @@
     <script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/loaders/GLTFLoader.js"></script>
     <style>
         body { margin: 0; overflow: hidden; background: #e0e0e0; font-family: sans-serif; }
-        
-        /* 左側のボタン列 */
         #ui-sidebar { 
             position: fixed; top: 0; left: 0; width: 160px; height: 100vh; 
-            background: rgba(255,255,255,0.85); border-right: 1px solid #ccc;
-            display: flex; flex-direction: column; gap: 5px; padding: 10px;
+            background: rgba(255,255,255,0.9); border-right: 1px solid #ccc;
+            display: flex; flex-direction: column; gap: 4px; padding: 10px;
             overflow-y: auto; z-index: 100; box-sizing: border-box;
         }
-        
         #ui-sidebar button { 
             width: 100%; padding: 8px; background: #fff; border: 1px solid #999; 
-            border-radius: 4px; font-size: 11px; cursor: pointer; text-align: left;
-            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+            border-radius: 4px; font-size: 10px; cursor: pointer; text-align: left;
         }
-        #ui-sidebar button:hover { background: #f0f0f0; }
-        #ui-sidebar button:active { background: #ddd; }
-
-        #monitor { 
-            position: fixed; top: 10px; left: 170px; width: 60%; font-size: 10px; color: #666; pointer-events: none;
-        }
-
+        #monitor { position: fixed; top: 10px; left: 170px; font-size: 11px; color: #444; }
         #guide {
-            position: fixed; bottom: 10px; right: 10px; background: rgba(0,0,0,0.6); color: #fff;
-            padding: 8px 12px; font-size: 12px; border-radius: 4px; pointer-events: none;
+            position: fixed; bottom: 10px; right: 10px; background: rgba(0,0,0,0.7); color: #fff;
+            padding: 10px; font-size: 12px; border-radius: 5px;
         }
     </style>
 </head>
 <body>
-    <div id="ui-sidebar">
-        <div style="font-weight:bold; font-size:12px; margin-bottom:5px;">Motions</div>
-    </div>
+    <div id="ui-sidebar"><div style="font-weight:bold;margin-bottom:5px;">Motions</div></div>
     <div id="monitor">Ready.</div>
-    <div id="guide">E:Forward | Q:Left | C:Right | S:Back | Space:Jump</div>
+    <div id="guide">E: Forward | S: Back | Q: Left | C: Right | Space: Jump</div>
 
     <script>
         const btnContainer = document.getElementById('ui-sidebar');
@@ -56,7 +44,7 @@
             scene.background = new THREE.Color(0xdddddd);
             
             camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
-            camera.position.set(0, 2, 5);
+            camera.position.set(0, 3, 6); // 少し高めのTPS視点
             camera.lookAt(0, 1, 0);
 
             renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -64,27 +52,24 @@
             document.body.appendChild(renderer.domElement);
 
             scene.add(new THREE.HemisphereLight(0xffffff, 0x888888, 1.5));
-            scene.add(new THREE.GridHelper(50, 50, 0xaaaaaa, 0xcccccc));
+            scene.add(new THREE.GridHelper(100, 100, 0x999999, 0xcccccc));
 
             const loader = new THREE.GLTFLoader();
 
-            // 1. モデル(m.glb)をロード
             loader.load('./m.glb', (gltf) => {
                 model = gltf.scene;
+                // ★向き修正: 前後逆ならここで180度(Math.PI)回転させる
+                model.rotation.y = Math.PI; 
                 scene.add(model);
                 mixer = new THREE.AnimationMixer(model);
-                report("Model M Loaded.");
+                report("Model M Loaded & Rotated.");
 
-                // 2. アニメーションファイル(a.glb, b.glb)をロード
                 ['./a.glb', './b.glb'].forEach(url => {
                     loader.load(url, (animGltf) => {
                         animGltf.animations.forEach((clip, i) => {
-                            // 腕伸び対策
                             clip.tracks = clip.tracks.filter(t => !t.name.endsWith('.position'));
-
                             const btn = document.createElement('button');
-                            const fileName = url.replace('./', '').replace('.glb', '');
-                            btn.innerText = `${fileName}: ${clip.name || i}`;
+                            btn.innerText = `${url.replace('./', '')}: ${clip.name || i}`;
                             btn.onclick = () => {
                                 mixer.stopAllAction();
                                 mixer.clipAction(clip).reset().fadeIn(0.2).play();
@@ -96,7 +81,6 @@
                 });
             });
 
-            // キー入力
             window.onkeydown = (e) => {
                 const k = e.key.toLowerCase();
                 if (k === 'e') moveState.e = true;
@@ -106,7 +90,6 @@
                 if (k === ' ' && !isJumping) {
                     isJumping = true;
                     velocityY = 0.15;
-                    report("Action: Jump");
                 }
             };
             window.onkeyup = (e) => {
@@ -124,31 +107,25 @@
                 if (mixer) mixer.update(delta);
 
                 if (model) {
-                    // フォートナイト風移動（位置と回転）
-                    if (moveState.e) model.translateZ(-0.06); // 向いている方向に前進
-                    if (moveState.s) model.translateZ(0.06);  // 後退
-                    if (moveState.q) model.rotation.y += 0.04; // 左旋回
-                    if (moveState.c) model.rotation.y -= 0.04; // 右旋回
+                    const speed = 0.08;
+                    // 平行移動（translateX / translateZ）
+                    // model.rotation.y = Math.PI なので、移動方向もそれに準じます
+                    if (moveState.e) model.translateZ(speed);  // 前（モデルの向きに対して）
+                    if (moveState.s) model.translateZ(-speed); // 後
+                    if (moveState.q) model.translateX(speed);  // 左（モデルの右側へスライド）
+                    if (moveState.c) model.translateX(-speed); // 右（モデルの左側へスライド）
 
-                    // ジャンプ物理
                     if (isJumping) {
                         model.position.y += velocityY;
                         velocityY -= 0.008;
-                        if (model.position.y <= 0) {
-                            model.position.y = 0;
-                            isJumping = false;
-                        }
+                        if (model.position.y <= 0) { model.position.y = 0; isJumping = false; }
                     }
                     
-                    // カメラをキャラに追従させる（TPS視点）
-                    const relativeCameraOffset = new THREE.Vector3(0, 2, 5);
-                    const cameraOffset = relativeCameraOffset.applyMatrix4(model.matrixWorld);
-                    camera.position.x = cameraOffset.x;
-                    camera.position.y = cameraOffset.y;
-                    camera.position.z = cameraOffset.z;
+                    // カメラ固定追従（キャラの後ろをキープ）
+                    camera.position.x = model.position.x;
+                    camera.position.z = model.position.z + 6;
                     camera.lookAt(model.position.x, model.position.y + 1, model.position.z);
                 }
-
                 renderer.render(scene, camera);
             }
             animate();
