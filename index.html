@@ -3,9 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>新しいタブ</title>
+    <title>3D Kinematics Analysis Lab</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     <style>
         body { margin: 0; overflow: hidden; background: #dcdcdc; font-family: sans-serif; }
         #ui-sidebar { 
@@ -21,14 +22,10 @@
     <div id="ui-sidebar"></div>
 
     <script>
-        let scene, camera, renderer, clock, mixer, model;
+        let scene, camera, renderer, clock, mixer, model, controls;
         let moveState = { q: false, e: false, c: false, s: false };
         let velocityY = 0, isJumping = false;
         let actions = {}, currentAction;
-        
-        // カメラ設定用
-        let cameraOffset = new THREE.Vector3(0, 2.5, 5); // キャラから見たカメラの位置
-        let targetRotation = 0;
 
         function fadeToAction(name, duration = 0.2) {
             const nextAction = actions[name];
@@ -43,20 +40,24 @@
             scene = new THREE.Scene();
             scene.background = new THREE.Color(0xdddddd);
             camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 3, 6);
             
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             document.body.appendChild(renderer.domElement);
 
+            // 【修正】マウスで視点を自由に動かせるように復活
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.1;
+            controls.enablePan = false; 
+
             scene.add(new THREE.HemisphereLight(0xffffff, 0x888888, 1.5));
             scene.add(new THREE.GridHelper(100, 100, 0x999999, 0xcccccc));
 
             const loader = new THREE.GLTFLoader();
-
             loader.load('./m.glb', (gltf) => {
                 model = gltf.scene;
-                // モデル自体の「正面」をZ+方向に合わせる（逆ならここを 0 にする）
-                model.rotation.y = Math.PI; 
                 scene.add(model);
                 mixer = new THREE.AnimationMixer(model);
 
@@ -67,7 +68,6 @@
                             const action = mixer.clipAction(clip);
                             const keyName = `${url.replace('./','')}_${clip.name || i}`;
                             actions[keyName] = action;
-
                             if (clip.name.includes("Walk_Loop")) actions['walk'] = action;
                             if (url === './a.glb' && i === 0) actions['idle'] = action;
 
@@ -97,6 +97,7 @@
                 requestAnimationFrame(animate);
                 const delta = clock.getDelta();
                 if (mixer) mixer.update(delta);
+                if (controls) controls.update();
 
                 if (model) {
                     let inputX = 0;
@@ -108,17 +109,23 @@
                     if (moveState.c) inputX += 1; 
 
                     if (inputX !== 0 || inputZ !== 0) {
-                        // 入力から目標の角度を計算
-                        targetRotation = Math.atan2(inputX, inputZ) + Math.PI;
+                        // 【重要】カメラの向きを取得（Y軸の回転のみ）
+                        const cameraY = Math.atan2(camera.position.x - model.position.x, camera.position.z - model.position.z);
                         
-                        // 滑らかに向きを変える（Lerp）
-                        let angleDiff = targetRotation - model.rotation.y;
-                        while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
-                        while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
-                        model.rotation.y += angleDiff * 0.1;
+                        // 入力方向の計算
+                        const moveAngle = Math.atan2(inputX, inputZ);
+                        
+                        // モデルが向くべき方向（カメラの向き ＋ 入力方向）
+                        const targetRotation = moveAngle + cameraY + Math.PI;
 
-                        // 移動処理（常にモデルの正面方向に進む）
-                        const speed = 0.1;
+                        // 【修正】スムーズに回転させる処理
+                        let diff = targetRotation - model.rotation.y;
+                        while (diff < -Math.PI) diff += Math.PI * 2;
+                        while (diff > Math.PI) diff -= Math.PI * 2;
+                        model.rotation.y += diff * 0.15;
+
+                        // 【修正】現在向いている方向へ進む
+                        const speed = 0.08;
                         model.position.x += Math.sin(model.rotation.y) * speed;
                         model.position.z += Math.cos(model.rotation.y) * speed;
 
@@ -127,21 +134,14 @@
                         if (!isJumping) fadeToAction('idle');
                     }
 
-                    // ジャンプ
                     if (isJumping) {
                         model.position.y += velocityY;
                         velocityY -= 0.008;
                         if (model.position.y <= 0) { model.position.y = 0; isJumping = false; }
                     }
 
-                    // ★カメラの完全追従（キャラの後ろに固定）
-                    const idealOffset = new THREE.Vector3(0, 2.5, 5); 
-                    // キャラクターの現在の位置と向きに合わせてオフセットを計算
-                    const currentOffset = idealOffset.clone().applyQuaternion(model.quaternion);
-                    camera.position.copy(model.position).add(currentOffset);
-                    
-                    // キャラクターの少し上（頭のあたり）を常に見る
-                    camera.lookAt(model.position.x, model.position.y + 1.5, model.position.z);
+                    // カメラの注視点を常にモデルの腰あたりに固定（移動に追従）
+                    controls.target.set(model.position.x, model.position.y + 1.2, model.position.z);
                 }
                 renderer.render(scene, camera);
             }
