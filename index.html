@@ -23,7 +23,7 @@
     </style>
 </head>
 <body>
-    <div id="overlay">CLICK TO START<br>(1: 殴り / 2: 剣 / 3: 魔法 / 左クリック: 攻撃)</div>
+    <div id="overlay">CLICK TO START<br>(1: 殴り / 2: 剣 / 3: 魔法 / V: しゃがみ / SPACE: ジャンプ)</div>
 
     <div id="inventory">
         <div class="slot active" data-key="1" id="slot-1">殴り</div>
@@ -38,6 +38,7 @@
         let scene, camera, renderer, clock, mixer, model;
         let moveState = { q: false, e: false, c: false, s: false };
         let currentEquip = 1; 
+        let isCrouching = false, isJumping = false, jumpVelocity = 0;
         let actions = {}, currentAction;
         let isAttacking = false;
         let cameraAzimuth = 0, cameraElevation = 0.2;
@@ -51,28 +52,19 @@
             }
         }
 
-        // 攻撃処理
         function performAttack() {
             if (isAttacking) return;
             isAttacking = true;
 
-            if (currentEquip === 1) { // 殴り
+            if (currentEquip === 1) {
                 fadeToAction('punch', 0.1);
                 setTimeout(() => { isAttacking = false; }, 600);
-            } 
-            else if (currentEquip === 2) { // 剣
+            } else if (currentEquip === 2) {
                 fadeToAction('sword_attack', 0.1);
                 setTimeout(() => { isAttacking = false; }, 800);
-            } 
-            else if (currentEquip === 3) { // 魔法
-                fadeToAction('magic_start', 0.1); // 構え
-                setTimeout(() => {
-                    fadeToAction('magic_fire', 0.05); // 撃つ
-                    setTimeout(() => {
-                        fadeToAction('magic_end', 0.2); // 手を下ろす
-                        setTimeout(() => { isAttacking = false; }, 400);
-                    }, 500);
-                }, 300);
+            } else if (currentEquip === 3) {
+                fadeToAction('magic_fire', 0.1); // 魔法発射
+                setTimeout(() => { isAttacking = false; }, 600);
             }
         }
 
@@ -99,26 +91,23 @@
                         animGltf.animations.forEach((clip, index) => {
                             clip.tracks = clip.tracks.filter(t => !t.name.endsWith('.position'));
                             const action = mixer.clipAction(clip);
-                            const name = clip.name;
+                            if (clip.name === 'Idle_Loop') actions['idle'] = action;
+                            if (clip.name === 'Walk_Loop') actions['walk'] = action;
+                            if (clip.name === 'Sprint_Loop') actions['run'] = action;
 
-                            // 基本（素手）
-                            if (name === 'Idle_Loop') actions['idle'] = action;
-                            if (name === 'Walk_Loop') actions['walk'] = action;
-                            if (name === 'Sprint_Loop') actions['run'] = action;
-                            
-                            // b.glb からの指定モーション
                             if (url === './b.glb') {
                                 if (index === 25) actions['punch'] = action;
-                                if (index === 41) actions['sword_attack'] = action;
                                 if (index === 43) actions['sword_idle'] = action;
                                 if (index === 44) actions['sword_walk'] = action;
                                 if (index === 38) actions['sword_run'] = action;
+                                if (index === 41) actions['sword_attack'] = action;
                                 if (index === 34) actions['magic_start'] = action;
                                 if (index === 36) actions['magic_pose'] = action;
                                 if (index === 37) actions['magic_fire'] = action;
                                 if (index === 35) actions['magic_end'] = action;
+                                if (index === 2) actions['crouch_idle'] = action;
+                                if (index === 1) actions['crouch_walk'] = action;
 
-                                // 攻撃系は1回再生
                                 if ([25, 41, 34, 37, 35].includes(index)) {
                                     action.setLoop(THREE.LoopOnce);
                                     action.clampWhenFinished = true;
@@ -134,22 +123,21 @@
                 if (document.pointerLockElement !== document.body) {
                     document.body.requestPointerLock();
                     document.getElementById('overlay').style.display = 'none';
-                } else if (e.button === 0) {
-                    performAttack();
-                }
-            });
-
-            window.addEventListener('mousemove', (e) => {
-                if (document.pointerLockElement === document.body) {
-                    cameraAzimuth -= e.movementX * 0.002;
-                    cameraElevation = Math.max(-0.7, Math.min(1.1, cameraElevation + e.movementY * 0.002));
-                }
+                } else if (e.button === 0) performAttack();
             });
 
             window.onkeydown = (e) => {
-                const k = e.key;
-                if (['e','s','q','c'].includes(k.toLowerCase())) moveState[k.toLowerCase()] = true;
-                if (k === '1' || k === '2' || k === '3') {
+                const k = e.key.toLowerCase();
+                if (['e','s','q','c'].includes(k)) moveState[k] = true;
+                if (k === 'v') isCrouching = !isCrouching;
+                if (k === ' ' && !isJumping) { isJumping = true; jumpVelocity = 0.15; }
+                if (['1','2','3'].includes(k)) {
+                    if (currentEquip === 3 && k !== '3') {
+                        fadeToAction('magic_end', 0.2); // 魔法解除モーション
+                    }
+                    if (k === '3' && currentEquip !== 3) {
+                        fadeToAction('magic_start', 0.2); // 魔法構え始め
+                    }
                     currentEquip = parseInt(k);
                     document.querySelectorAll('.slot').forEach(s => s.classList.remove('active'));
                     document.getElementById(`slot-${k}`).classList.add('active');
@@ -161,6 +149,13 @@
                 if (['e','s','q','c'].includes(k)) moveState[k] = false;
             };
 
+            window.addEventListener('mousemove', (e) => {
+                if (document.pointerLockElement === document.body) {
+                    cameraAzimuth -= e.movementX * 0.002;
+                    cameraElevation = Math.max(-0.7, Math.min(1.1, cameraElevation + e.movementY * 0.002));
+                }
+            });
+
             clock = new THREE.Clock();
 
             function animate() {
@@ -168,7 +163,7 @@
                 const delta = clock.getDelta();
                 if (mixer) mixer.update(delta);
 
-                if (model && !isAttacking) {
+                if (model) {
                     let inputX = 0, inputZ = 0;
                     if (moveState.e) inputZ -= 1;
                     if (moveState.s) inputZ += 1;
@@ -176,33 +171,46 @@
                     if (moveState.c) inputX += 1;
                     const isMoving = (inputX !== 0 || inputZ !== 0);
 
-                    if (isMoving) {
+                    // ジャンプ・重力処理
+                    if (isJumping) {
+                        model.position.y += jumpVelocity;
+                        jumpVelocity -= 0.008;
+                        if (model.position.y <= (isCrouching ? -0.4 : 0)) {
+                            model.position.y = isCrouching ? -0.4 : 0;
+                            isJumping = false;
+                        }
+                    }
+
+                    if (isMoving && !isAttacking) {
                         const targetRotation = Math.atan2(inputX, inputZ) + cameraAzimuth;
                         let diff = targetRotation - model.rotation.y;
                         while (diff < -Math.PI) diff += Math.PI * 2;
                         while (diff > Math.PI) diff -= Math.PI * 2;
                         model.rotation.y += diff * 0.15;
 
-                        const onlyForward = (moveState.e && !moveState.s && !moveState.q && !moveState.c);
-                        let speed = onlyForward ? 0.14 : 0.07;
+                        let speed = (moveState.e && !isCrouching) ? 0.14 : 0.07;
                         model.position.x += Math.sin(model.rotation.y) * speed;
                         model.position.z += Math.cos(model.rotation.y) * speed;
 
-                        // 装備に応じた移動アニメーションの分岐
+                        // モーション分岐
                         if (currentEquip === 2) {
-                            fadeToAction(onlyForward ? 'sword_run' : 'sword_walk', 0.2);
+                            fadeToAction(moveState.e ? 'sword_run' : 'sword_walk', 0.2);
+                        } else if (isCrouching) {
+                            fadeToAction('crouch_walk', 0.2);
                         } else {
-                            fadeToAction(onlyForward ? 'run' : 'walk', 0.2);
+                            fadeToAction(moveState.e ? 'run' : 'walk', 0.2);
                         }
-                    } else {
-                        // 装備に応じた待機アニメーションの分岐
+                    } else if (!isAttacking) {
                         if (currentEquip === 2) fadeToAction('sword_idle', 0.2);
-                        else if (currentEquip === 3) fadeToAction('magic_pose', 0.2); // 魔法装備中は常に構え
-                        else fadeToAction('idle', 0.2);
+                        else if (currentEquip === 3) fadeToAction('magic_pose', 0.2);
+                        else fadeToAction(isCrouching ? 'crouch_idle' : 'idle', 0.2);
                     }
-                }
 
-                if (model) {
+                    // しゃがみ高さ
+                    const targetY = isCrouching ? -0.4 : 0;
+                    if (!isJumping) model.position.y += (targetY - model.position.y) * 0.1;
+
+                    // カメラ
                     const camDist = 2.4, camSide = 1.0, camHeight = 1.5;
                     const hDist = camDist * Math.cos(cameraElevation);
                     const vDist = camDist * Math.sin(cameraElevation);
