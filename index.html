@@ -5,26 +5,24 @@
     <title>新しいタブ</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/cannon-es@0.19.0/dist/cannon-es.js"></script>
     <style>
-        body { margin: 0; overflow: hidden; background: #222; }
-        #overlay { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); color: white; background: rgba(0,0,0,0.8); padding: 20px; border-radius: 10px; pointer-events: none; z-index: 100; text-align: center; }
+        body { margin: 0; overflow: hidden; background: #111; }
+        #overlay { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); color: white; background: rgba(0,0,0,0.8); padding: 20px; border-radius: 10px; z-index: 100; text-align: center; pointer-events: none; }
     </style>
 </head>
 <body>
-    <div id="overlay">CLICK TO START<br>Physics Logic: Ground Clamping Active</div>
+    <div id="overlay">CLICK TO START<br>Engine: Cannon-es (Real-time Physics)</div>
 
-    <script>
+    <script type="module">
+        import * as CANNON from 'https://cdn.jsdelivr.net/npm/cannon-es@0.19.0/dist/cannon-es.js';
+
         let scene, camera, renderer, clock, mixer, model;
+        let world, characterBody, floorBody; // 物理用
         let moveState = { q: false, e: false, c: false, s: false };
-        let velocityY = 0, isJumping = false, canJump = true;
-        let isCrouching = false;
+        let isJumping = false, canJump = true, isCrouching = false;
         let actions = {}, currentAction;
         let cameraAzimuth = 0, cameraElevation = 0.2;
-
-        // 物理パラメータ
-        const GRAVITY = -0.012; // 重力の強さ
-        const TERMINAL_VELOCITY = -0.5; // 落下速度の限界
-        const GROUND_Y = 0; // 地面の高さ
 
         function fadeToAction(name, duration = 0.2) {
             const nextAction = actions[name];
@@ -35,16 +33,51 @@
             }
         }
 
+        function initPhysics() {
+            // 物理世界の作成
+            world = new CANNON.World();
+            world.gravity.set(0, -15, 0); // 重力を少し強めに
+
+            // 地面の物理体
+            const floorMaterial = new CANNON.Material();
+            floorBody = new CANNON.Body({
+                mass: 0, // 質量0 = 固定された地面
+                shape: new CANNON.Plane(),
+                material: floorMaterial
+            });
+            floorBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
+            world.addBody(floorBody);
+
+            // キャラクターの物理体 (カプセル状の代わりに球体を使用)
+            const charMaterial = new CANNON.Material();
+            characterBody = new CANNON.Body({
+                mass: 1,
+                shape: new CANNON.Sphere(0.4), // 衝突判定の大きさ
+                material: charMaterial,
+                fixedRotation: true // キャラが物理で転がらないように
+            });
+            characterBody.position.set(0, 2, 0);
+            world.addBody(characterBody);
+
+            // 地面とキャラの摩擦設定
+            const contactMaterial = new CANNON.ContactMaterial(floorMaterial, charMaterial, {
+                friction: 0.1,
+                restitution: 0 // 跳ね返りなし
+            });
+            world.addContactMaterial(contactMaterial);
+        }
+
         window.onload = function() {
+            initPhysics();
+
             scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x333333);
             camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             document.body.appendChild(renderer.domElement);
 
             scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1.2));
-            scene.add(new THREE.GridHelper(500, 100, 0x555555, 0x444444));
+            scene.add(new THREE.GridHelper(500, 100, 0x444444, 0x222222));
 
             document.body.addEventListener('click', () => document.body.requestPointerLock());
 
@@ -87,7 +120,8 @@
                 if (['e','s','q','c'].includes(k)) moveState[k] = true;
                 if (k === 'v') isCrouching = !isCrouching;
                 if (k === ' ' && !isJumping && canJump) { 
-                    isJumping = true; canJump = false; velocityY = 0.22; 
+                    characterBody.velocity.y = 7; // 物理的な上方向の速度
+                    isJumping = true; canJump = false;
                     fadeToAction('jump_start', 0.1);
                 }
             };
@@ -101,42 +135,49 @@
             function animate() {
                 requestAnimationFrame(animate);
                 const delta = clock.getDelta();
+                
+                // 物理ワールドの時間を進める
+                world.fixedStep();
+
                 if (mixer) mixer.update(delta);
 
-                if (model) {
-                    // --- 移動処理 ---
+                if (model && characterBody) {
+                    // --- 移動処理 (物理ボディの速度を操作) ---
                     let inputX = (moveState.q ? -1 : 0) + (moveState.c ? 1 : 0);
                     let inputZ = (moveState.e ? -1 : 0) + (moveState.s ? 1 : 0);
 
                     if (inputX !== 0 || inputZ !== 0) {
                         const targetRot = Math.atan2(inputX, inputZ) + cameraAzimuth;
                         model.rotation.y += (targetRot - model.rotation.y) * 0.15;
-                        let speed = (moveState.e && !isCrouching && !moveState.q && !moveState.c) ? 0.16 : 0.08;
-                        model.position.x += Math.sin(model.rotation.y) * speed;
-                        model.position.z += Math.cos(model.rotation.y) * speed;
-                        if (!isJumping) fadeToAction(isCrouching ? 'crouch_walk' : (speed > 0.1 ? 'run' : 'walk'), 0.2);
+                        
+                        let speed = (moveState.e && !isCrouching && !moveState.q && !moveState.c) ? 6 : 3;
+                        
+                        // 物理ボディの速度を設定
+                        characterBody.velocity.x = Math.sin(model.rotation.y) * speed;
+                        characterBody.velocity.z = Math.cos(model.rotation.y) * speed;
+                        
+                        if (!isJumping) fadeToAction(isCrouching ? 'crouch_walk' : (speed > 4 ? 'run' : 'walk'), 0.2);
                     } else {
+                        characterBody.velocity.x *= 0.9; // 急止まり
+                        characterBody.velocity.z *= 0.9;
                         if (!isJumping) fadeToAction(isCrouching ? 'crouch_idle' : 'idle', 0.2);
                     }
 
-                    // --- 【物理演算コア】重力と接地判定 ---
-                    velocityY = Math.max(TERMINAL_VELOCITY, velocityY + GRAVITY);
-                    model.position.y += velocityY;
-
-                    // しゃがみ時は足の判定を深くする（モデルが浮かないように）
-                    const crouchOffset = isCrouching ? 0.15 : 0; 
+                    // --- 物理とビジュアルの同期 ---
+                    model.position.copy(characterBody.position);
                     
-                    if (model.position.y <= GROUND_Y - crouchOffset) {
-                        if (isJumping) {
-                            isJumping = false;
-                            fadeToAction('jump_land', 0.1);
-                            setTimeout(() => { canJump = true; }, 300);
-                        }
-                        model.position.y = GROUND_Y - crouchOffset; // 地面に固定
-                        velocityY = 0; // 垂直速度リセット
+                    // しゃがみ時のメッシュ沈ませ補正 (これだけは視覚的に必要)
+                    if (isCrouching) model.position.y -= 0.2;
+                    else model.position.y -= 0.4; // 衝突球体の中心から足元へのオフセット
+
+                    // 接地判定 (物理的な高さで判定)
+                    if (isJumping && characterBody.position.y <= 0.41) {
+                        isJumping = false;
+                        fadeToAction('jump_land', 0.1);
+                        setTimeout(() => { canJump = true; }, 300);
                     }
 
-                    // カメラ追従
+                    // カメラ
                     const dist = 5;
                     camera.position.set(
                         model.position.x + dist * Math.sin(cameraAzimuth) * Math.cos(cameraElevation),
