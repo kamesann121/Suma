@@ -7,22 +7,28 @@
     <script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/loaders/GLTFLoader.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/cannon-es@0.19.0/dist/cannon-es.js"></script>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; }
-        #overlay { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); color: white; background: rgba(0,0,0,0.8); padding: 20px; border-radius: 10px; z-index: 100; text-align: center; pointer-events: none; font-family: sans-serif;}
+        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
+        #overlay { position: fixed; top: 20px; right: 20px; color: #0f0; background: rgba(0,0,0,0.8); padding: 15px; border-radius: 5px; font-size: 12px; pointer-events: none; }
     </style>
 </head>
 <body>
-    <div id="overlay">CLICK TO START<br>Physics Grounding & Shadows Active</div>
+    <div id="overlay">
+        PHYSICS DEBUG MODE ON<br>
+        - 赤い球: 物理判定（Collider）<br>
+        - V: しゃがみ / Space: ジャンプ
+    </div>
 
     <script type="module">
         import * as CANNON from 'https://cdn.jsdelivr.net/npm/cannon-es@0.19.0/dist/cannon-es.js';
 
         let scene, camera, renderer, clock, mixer, model;
-        let world, characterBody;
+        let world, characterBody, debugSphere; 
         let moveState = { q: false, e: false, c: false, s: false };
         let isJumping = false, canJump = true, isCrouching = false;
         let actions = {}, currentAction;
         let cameraAzimuth = 0, cameraElevation = 0.2;
+
+        const RADIUS = 0.4; // 物理判定の半径
 
         function fadeToAction(name, duration = 0.2) {
             const nextAction = actions[name];
@@ -35,19 +41,19 @@
 
         function initPhysics() {
             world = new CANNON.World();
-            world.gravity.set(0, -18, 0); // 重力
+            world.gravity.set(0, -20, 0);
 
-            const floorBody = new CANNON.Body({
-                mass: 0,
-                shape: new CANNON.Plane(),
-            });
+            // 地面
+            const floorBody = new CANNON.Body({ mass: 0, shape: new CANNON.Plane() });
             floorBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
             world.addBody(floorBody);
 
+            // キャラ物理体
             characterBody = new CANNON.Body({
                 mass: 1,
-                shape: new CANNON.Sphere(0.3), // 判定の大きさ
-                fixedRotation: true
+                shape: new CANNON.Sphere(RADIUS),
+                fixedRotation: true,
+                linearDamping: 0.9 // 滑りすぎ防止
             });
             characterBody.position.set(0, 5, 0);
             world.addBody(characterBody);
@@ -56,39 +62,27 @@
         window.onload = function() {
             initPhysics();
             scene = new THREE.Scene();
-            scene.background = new THREE.Color(0xa0a0a0);
+            scene.background = new THREE.Color(0x111111);
             
             camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.shadowMap.enabled = true; // 影を有効化
             document.body.appendChild(renderer.domElement);
 
-            scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1.2));
-            const sun = new THREE.DirectionalLight(0xffffff, 0.8);
-            sun.position.set(5, 10, 5);
-            sun.castShadow = true;
-            scene.add(sun);
+            // デバッグ用の赤い球体
+            const debugGeo = new THREE.SphereGeometry(RADIUS);
+            const debugMat = new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true });
+            debugSphere = new THREE.Mesh(debugGeo, debugMat);
+            scene.add(debugSphere);
 
-            // --- 地面のテクスチャ作成 (チェッカー柄) ---
-            const size = 1000;
-            const divisions = 1000;
-            const grid = new THREE.GridHelper(size, divisions, 0x888888, 0x444444);
-            scene.add(grid);
-            
-            const planeGeo = new THREE.PlaneGeometry(size, size);
-            const planeMat = new THREE.MeshStandardMaterial({ color: 0x555555 });
-            const floorMesh = new THREE.Mesh(planeGeo, planeMat);
-            floorMesh.rotation.x = -Math.PI / 2;
-            floorMesh.receiveShadow = true;
-            scene.add(floorMesh);
+            scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1.2));
+            scene.add(new THREE.GridHelper(500, 100, 0x333333, 0x222222));
 
             document.body.addEventListener('click', () => document.body.requestPointerLock());
 
             const loader = new THREE.GLTFLoader();
             loader.load('./m.glb', (gltf) => {
                 model = gltf.scene;
-                model.traverse(n => { if(n.isMesh) n.castShadow = true; });
                 scene.add(model);
                 mixer = new THREE.AnimationMixer(model);
 
@@ -122,7 +116,7 @@
 
             window.onkeydown = (e) => {
                 const k = e.key.toLowerCase();
-                if (['e','s','q','c'].includes(k)) moveState[k] = true;
+                if (['e', 's', 'q', 'c'].includes(k)) moveState[k] = true;
                 if (k === 'v') isCrouching = !isCrouching;
                 if (k === ' ' && !isJumping && canJump) { 
                     characterBody.velocity.y = 8;
@@ -132,7 +126,7 @@
             };
             window.onkeyup = (e) => {
                 const k = e.key.toLowerCase();
-                if (['e','s','q','c'].includes(k)) moveState[k] = false;
+                if (['e', 's', 'q', 'c'].includes(k)) moveState[k] = false;
             };
 
             clock = new THREE.Clock();
@@ -155,23 +149,26 @@
                         characterBody.velocity.z = Math.cos(model.rotation.y) * speed;
                         if (!isJumping) fadeToAction(isCrouching ? 'crouch_walk' : (speed > 4 ? 'run' : 'walk'), 0.2);
                     } else {
-                        characterBody.velocity.x *= 0.8;
-                        characterBody.velocity.z *= 0.8;
                         if (!isJumping) fadeToAction(isCrouching ? 'crouch_idle' : 'idle', 0.2);
                     }
 
-                    // モデルを物理体に同期
+                    // --- 究極の接地同期 ---
+                    // 1. デバッグ球体を物理体に同期
+                    debugSphere.position.copy(characterBody.position);
+                    
+                    // 2. モデルを「物理球体の底（地面）」に強制固定
+                    // 物理体の中心(y)から半径(RADIUS)分だけ下げた位置が「本当の地面」
                     model.position.set(
                         characterBody.position.x,
-                        characterBody.position.y - 0.3, // 物理球体の中心(0.3m)から地面に合わせる
+                        characterBody.position.y - RADIUS, 
                         characterBody.position.z
                     );
-                    
-                    // しゃがみ時はモデルを少しだけ下に下げて接地感を出す
-                    if (isCrouching) model.position.y -= 0.1;
 
-                    // 接地判定 (物理球体の底が地面 0 に触れているか)
-                    if (isJumping && characterBody.position.y <= 0.31) {
+                    // ★しゃがみ時に足が浮くなら、ここを -0.5 などに調整
+                    if (isCrouching) model.position.y -= 0.15; 
+
+                    // 接地判定
+                    if (isJumping && characterBody.position.y <= RADIUS + 0.05) {
                         isJumping = false;
                         fadeToAction('jump_land', 0.1);
                         setTimeout(() => { canJump = true; }, 300);
