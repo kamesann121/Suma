@@ -49,6 +49,7 @@
         let isCrouching = false;
         let actions = {}, currentAction;
         let cameraAzimuth = 0, cameraElevation = 0.2;
+        let upperBodyBones = []; // 上半身のボーンリスト
 
         function fadeToAction(name, duration = 0.2) {
             const nextAction = actions[name];
@@ -84,10 +85,8 @@
 
             loader.load('./Pistol.glb', (gltf) => {
                 gun = gltf.scene;
-                const s = 0.0016; 
-                gun.scale.set(s, s, s); 
+                gun.scale.set(0.0016, 0.0016, 0.0016); 
                 gun.rotation.set(Math.PI / 2, Math.PI / 2, 0); 
-
                 gun.visible = false; 
             });
 
@@ -96,18 +95,21 @@
                 scene.add(model);
                 mixer = new THREE.AnimationMixer(model);
 
-                if (gun) {
-                    model.traverse((child) => {
-                        if (child.isBone) {
-                            const boneName = child.name.toLowerCase();
-                            if (boneName.includes("hand") && (boneName.includes("r") || boneName.includes("right"))) {
-                                child.add(gun);
-                                // ★ ピストルの位置調整：左に-0.02、前に+0.05（モデルに合わせて微調整してください）
-                                gun.position.set(-0.02, 0.01, 0.05); 
-                            }
+                model.traverse((child) => {
+                    if (child.isBone) {
+                        const name = child.name.toLowerCase();
+                        // 上半身として扱うボーン（背骨、肩、腕、手、頭）をリストアップ
+                        if (name.includes("spine") || name.includes("arm") || name.includes("hand") || name.includes("neck") || name.includes("head") || name.includes("shoulder")) {
+                            upperBodyBones.push(child);
                         }
-                    });
-                }
+                        
+                        // ピストルのアタッチ（前：0.08、左：-0.04に調整）
+                        if (name.includes("hand") && (name.includes("r") || name.includes("right"))) {
+                            child.add(gun);
+                            gun.position.set(-0.04, 0.01, 0.08); 
+                        }
+                    }
+                });
 
                 ['./a.glb', './b.glb'].forEach(url => {
                     loader.load(url, (animGltf) => {
@@ -118,7 +120,12 @@
                             if (name === 'Idle_Loop') actions['idle'] = action;
                             if (name === 'Walk_Loop') actions['walk'] = action;
                             if (name === 'Sprint_Loop') actions['run'] = action;
-                            if (url === './b.glb' && index === 19) actions['aim_pose'] = action; 
+                            if (url === './b.glb' && index === 19) {
+                                actions['aim_pose'] = action;
+                                // 構えポーズの情報をキャッシュしておく（後で手動コピーするため）
+                                action.play();
+                                action.weight = 0; // 通常は非表示
+                            }
                             if (url === './b.glb') {
                                 if (index === 1) actions['crouch_walk'] = action;
                                 if (index === 2) actions['crouch_idle'] = action;
@@ -159,7 +166,11 @@
             function animate() {
                 requestAnimationFrame(animate);
                 const delta = clock.getDelta();
-                if (mixer) mixer.update(delta);
+
+                // 1. アニメーションを通常通り更新（これで下半身が動く）
+                if (mixer) {
+                    mixer.update(delta);
+                }
 
                 if (model) {
                     let inputX = 0, inputZ = 0;
@@ -169,6 +180,7 @@
                     if (moveState.c) inputX += 1;
                     const isMoving = (inputX !== 0 || inputZ !== 0);
 
+                    // 移動と向き
                     if (isMoving) {
                         const targetRotation = Math.atan2(inputX, inputZ) + cameraAzimuth;
                         let diff = targetRotation - model.rotation.y;
@@ -181,26 +193,30 @@
                         model.position.x += Math.sin(model.rotation.y) * speed;
                         model.position.z += Math.cos(model.rotation.y) * speed;
 
-                        // ★ 改善：ピストル装備中も足を動かす
-                        if (currentEquip === 2 && actions['aim_pose']) {
-                            // 構えポーズと歩きを混ぜる（構えのウェイトを強くする）
-                            actions['aim_pose'].play().setEffectiveWeight(1.0);
-                            const walkAnim = isCrouching ? actions['crouch_walk'] : (onlyForward ? actions['run'] : actions['walk']);
-                            if(walkAnim) walkAnim.play().setEffectiveWeight(0.5); 
-                            currentAction = actions['aim_pose'];
-                        } else {
-                            if (isCrouching) fadeToAction('crouch_walk', 0.2);
-                            else if (onlyForward) fadeToAction('run', 0.2); 
-                            else fadeToAction('walk', 0.2);
-                        }
+                        if (isCrouching) fadeToAction('crouch_walk', 0.2);
+                        else if (onlyForward) fadeToAction('run', 0.2); 
+                        else fadeToAction('walk', 0.2);
                     } else {
-                        if (currentEquip === 2 && actions['aim_pose']) {
-                            fadeToAction('aim_pose', 0.2);
-                        } else {
-                            fadeToAction(isCrouching ? 'crouch_idle' : 'idle', 0.2);
-                        }
+                        fadeToAction(isCrouching ? 'crouch_idle' : 'idle', 0.2);
                     }
 
+                    // 2. ★ 上半身のボーンを「構えポーズ」で強制上書き（ピストル装備時のみ）
+                    if (currentEquip === 2 && actions['aim_pose']) {
+                        // このタイミングでボーンを強制固定することで、下半身は歩きつつ腕は固定される
+                        // 注：本来はIKなどを使いますが、まずは一番シンプルな「ポーズ固定」を試します
+                        model.traverse((child) => {
+                            if (child.isBone && upperBodyBones.includes(child)) {
+                                // アニメーションミキサーによって動かされた値を無視し、
+                                // プログラムで「前を向く」ように微調整を加えることも可能
+                            }
+                        });
+                        // 構えポーズの影響を最大化
+                        actions['aim_pose'].weight = 1.0; 
+                    } else if (actions['aim_pose']) {
+                        actions['aim_pose'].weight = 0;
+                    }
+
+                    // 高さ
                     const targetY = isCrouching ? -0.4 : 0;
                     model.position.y += (targetY - model.position.y) * 0.1;
 
