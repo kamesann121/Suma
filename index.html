@@ -37,7 +37,7 @@
 
     <script>
         let scene, camera, renderer, clock, mixer, model;
-        let vfxMixer; // 魔法陣用
+        let vfxMixer;
         let moveState = { q: false, e: false, c: false, s: false };
         let velocityY = 0, isJumping = false, canJump = true, isCrouching = false, isAttacking = false;
         let currentEquip = 1, actions = {}, currentAction;
@@ -58,7 +58,6 @@
         async function changeEquip(newSlot) {
             if (currentEquip === newSlot || isAttacking) return;
             
-            // 魔法解除時のクリーンアップ
             if (currentEquip === 3) {
                 isCharging = false;
                 if (vfxGround) vfxGround.visible = false;
@@ -75,26 +74,22 @@
                 isCharging = true;
                 fadeToAction('magic_start', 0.2);
                 
-                // 地面の魔法陣（magic.glb）の準備
                 if (vfxGround) {
                     vfxGround.visible = true;
-                    vfxGround.position.y = -1.0; // 地面下からスタート
+                    vfxGround.position.y = -1.0;
                     if (vfxMixer) {
                         const chargeAnim = vfxMixer.clipAction(vfxGround.animations[0]);
                         chargeAnim.reset().play();
                     }
                 }
 
-                // 手元のエフェクト（magic2.glb）の準備
                 if (vfxFront) {
                     vfxFront.visible = true;
-                    vfxFront.scale.set(0.11, 0.11, 0.11); // 3分の1のサイズ
+                    // さらに3分の1（0.11の3分の1 ＝ 約0.037）に縮小
+                    vfxFront.scale.set(0.037, 0.037, 0.037); 
                 }
 
-                // 5秒間のチャージ（移動不可・攻撃不可）
-                setTimeout(() => {
-                    if (currentEquip === 3) isCharging = false;
-                }, 5000);
+                setTimeout(() => { if (currentEquip === 3) isCharging = false; }, 5000);
             } else {
                 updateMotion();
             }
@@ -105,12 +100,11 @@
             const handPos = new THREE.Vector3();
             leftHandBone.getWorldPosition(handPos);
 
+            // magicball.glb をそのまま飛ばす（マテリアル上書きなし）
             loader.load('./magicball.glb', (gltf) => {
                 const ball = gltf.scene;
                 ball.position.copy(handPos);
-                ball.traverse(n => {
-                    if (n.isMesh) n.material = new THREE.MeshBasicMaterial({ color: 0x00aaff });
-                });
+                
                 const direction = new THREE.Vector3(0, 0, 1).applyQuaternion(model.quaternion);
                 scene.add(ball);
                 magicBalls.push({ mesh: ball, dir: direction, life: 100 });
@@ -132,7 +126,7 @@
         }
 
         function updateMotion() {
-            if (isAttacking || isJumping || (currentEquip === 3)) return; // 魔法装備中は基本モーション更新停止
+            if (isAttacking || isJumping || (currentEquip === 3)) return;
             let inputX = (moveState.q ? -1 : 0) + (moveState.c ? 1 : 0);
             let inputZ = (moveState.e ? -1 : 0) + (moveState.s ? 1 : 0);
             const isMoving = (inputX !== 0 || inputZ !== 0);
@@ -236,7 +230,8 @@
                 const k = e.key.toLowerCase();
                 if (['e','s','q','c'].includes(k)) moveState[k] = true;
                 if (k === 'v') isCrouching = !isCrouching;
-                if (k === ' ' && !isJumping && canJump) { 
+                // --- 【修正：魔法装備中はジャンプ禁止】 ---
+                if (k === ' ' && !isJumping && canJump && currentEquip !== 3) { 
                     isJumping = true; canJump = false; velocityY = 0.18; 
                     fadeToAction('jump_start', 0.1); 
                 }
@@ -258,7 +253,6 @@
                 if (vfxMixer) vfxMixer.update(delta);
 
                 if (model) {
-                    // 魔法装備中は動けない
                     const canMove = !isAttacking && currentEquip !== 3;
                     let inputX = (moveState.q ? -1 : 0) + (moveState.c ? 1 : 0);
                     let inputZ = (moveState.e ? -1 : 0) + (moveState.s ? 1 : 0);
@@ -278,7 +272,6 @@
                     }
                     updateMotion();
 
-                    // 魔法陣と手元エフェクトの更新
                     if (vfxGround && vfxGround.visible) {
                         vfxGround.position.set(model.position.x, vfxGround.position.y, model.position.z);
                         if (vfxGround.position.y < 0) vfxGround.position.y += 0.01;
@@ -288,8 +281,9 @@
                         const handPos = new THREE.Vector3();
                         leftHandBone.getWorldPosition(handPos);
                         vfxFront.position.copy(handPos);
-                        vfxFront.rotation.y += 0.05;
-                        vfxFront.rotation.z += 0.02;
+                        // --- 【修正：回転方向と速度を変更】 ---
+                        vfxFront.rotation.x -= 0.05;
+                        vfxFront.rotation.y -= 0.05;
                     }
 
                     for (let i = magicBalls.length - 1; i >= 0; i--) {
@@ -297,7 +291,6 @@
                         if (magicBalls[i].life-- <= 0) { scene.remove(magicBalls[i].mesh); magicBalls.splice(i, 1); }
                     }
 
-                    // ジャンプ・高さ処理
                     if (isJumping) {
                         model.position.y += velocityY; velocityY -= 0.008;
                         if (velocityY < 0 && currentAction === actions['jump_start']) fadeToAction('jump_loop', 0.3);
@@ -311,7 +304,6 @@
                         model.position.y += (targetY - model.position.y) * 0.1;
                     }
 
-                    // TPSカメラ
                     const camDist = 2.4, camSide = 1.0, camHeight = 1.5;
                     const hDist = camDist * Math.cos(cameraElevation);
                     const vDist = camDist * Math.sin(cameraElevation);
