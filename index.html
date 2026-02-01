@@ -145,7 +145,11 @@
             }
             activeIdx = idx;
             document.querySelectorAll('.item-slot').forEach((s, i) => s.classList.toggle('selected', i === idx - 1));
-            if (subAsset) subAsset.visible = (idx === 2);
+            // 剣の表示は移動状態に応じて後で更新されるので、ここでは初期設定のみ
+            if (subAsset) {
+                // Mode 2以外では必ず非表示
+                if (idx !== 2) subAsset.visible = false;
+            }
             if (idx === 3) {
                 isStandby = true;
                 magicChargeTime = 0; // チャージリセット
@@ -217,7 +221,17 @@
 
         function triggerAction() {
             if (procActive || inAir || isStandby) return;
+            
+            // 魔法モードでReadyじゃない場合は何もしない
+            if (activeIdx === 3 && !magicReady) return;
+            
             procActive = true;
+            
+            // 剣モードの攻撃時は剣を表示
+            if (activeIdx === 2 && subAsset) {
+                subAsset.visible = true;
+            }
+            
             let mId = (activeIdx === 2) ? 'm_action2' : (activeIdx === 3 ? 'm_action3' : 'm_action1');
             if (activeIdx === 3) {
                 emitObj();
@@ -235,6 +249,13 @@
             if (procActive || inAir || (activeIdx === 3)) return;
             let dx = (keys.q ? -1 : 0) + (keys.c ? 1 : 0);
             let dz = (keys.e ? -1 : 0) + (keys.s ? 1 : 0);
+            
+            // 剣の表示ロジック：Mode 2で移動していない時のみ表示
+            if (subAsset) {
+                const isMoving = (dx !== 0 || dz !== 0);
+                subAsset.visible = (activeIdx === 2 && !isMoving);
+            }
+            
             if (dx !== 0 || dz !== 0) {
                 if (isLowPos) switchMotion('m_low_walk', 0.2);
                 else if (keys.e && !keys.s && !keys.q && !keys.c) switchMotion('m_fast', 0.2);
