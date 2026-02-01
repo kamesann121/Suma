@@ -3,23 +3,23 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>新しいタブ</title>
+    <title>3D Application</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/loaders/GLTFLoader.js"></script>
     <style>
         body { margin: 0; overflow: hidden; background: #dcdcdc; font-family: sans-serif; }
-        #overlay { 
+        #gui-overlay { 
             position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
             color: white; background: rgba(0,0,0,0.7); padding: 25px; border-radius: 12px;
             text-align: center; pointer-events: none; z-index: 200; font-weight: bold;
         }
-        #inventory { position: fixed; bottom: 20px; right: 20px; display: flex; gap: 10px; z-index: 300; }
-        .slot {
+        #ui-bar { position: fixed; bottom: 20px; right: 20px; display: flex; gap: 10px; z-index: 300; }
+        .item-slot {
             width: 60px; height: 60px; background: rgba(0, 0, 0, 0.6); border: 2px solid #555; border-radius: 8px;
             display: flex; align-items: center; justify-content: center; color: white; font-size: 10px; font-weight: bold;
         }
-        .slot.active { border-color: #ffaa00; background: rgba(255, 170, 0, 0.4); }
-        #reticle {
+        .item-slot.selected { border-color: #ffaa00; background: rgba(255, 170, 0, 0.4); }
+        #aim-mark {
             position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
             width: 8px; height: 8px; border: 2px solid rgba(0, 255, 0, 0.8);
             border-radius: 50%; pointer-events: none; z-index: 100;
@@ -27,118 +27,97 @@
     </style>
 </head>
 <body>
-    <div id="overlay">CLICK TO START<br>(1:殴り 2:剣 3:魔法 / V:しゃがみ)</div>
-    <div id="reticle"></div>
-    <div id="inventory">
-        <div class="slot active" id="slot-1">殴り</div>
-        <div class="slot" id="slot-2">剣</div>
-        <div class="slot" id="slot-3">魔法</div>
+    <div id="gui-overlay">START APPLICATION<br>(Keys 1, 2, 3 / V: Squat)</div>
+    <div id="aim-mark"></div>
+    <div id="ui-bar">
+        <div class="item-slot selected" id="s-1">Mode 1</div>
+        <div class="item-slot" id="s-2">Mode 2</div>
+        <div class="item-slot" id="s-3">Special</div>
     </div>
 
     <script>
-        let scene, camera, renderer, clock, mixer, model;
-        let vfxMixer;
-        let moveState = { q: false, e: false, c: false, s: false };
-        let velocityY = 0, isJumping = false, canJump = true, isCrouching = false, isAttacking = false;
-        let currentEquip = 1, actions = {}, currentAction;
-        let rightHandBone, leftHandBone, swordMesh;
-        let vfxGround, vfxFront, magicBalls = [], cameraAzimuth = 0, cameraElevation = 0.2;
-        let isCharging = false;
-        const loader = new THREE.GLTFLoader();
+        let scene, camera, renderer, clock, mainMixer, coreModel;
+        let effectMixer;
+        let keys = { q: false, e: false, c: false, s: false };
+        let vertVel = 0, inAir = false, jumpReady = true, isLowPos = false, procActive = false;
+        let activeIdx = 1, motionLib = {}, activeMotion;
+        let r_mount, l_mount, subAsset;
+        let baseVfx, handVfx, projectiles = [], camRotX = 0, camRotY = 0.2;
+        let isStandby = false;
+        const gltfLoader = new THREE.GLTFLoader();
 
-        function fadeToAction(name, duration = 0.2) {
-            const nextAction = actions[name];
-            if (nextAction && currentAction !== nextAction) {
-                if (currentAction) currentAction.fadeOut(duration);
-                nextAction.reset().setEffectiveTimeScale(1).setEffectiveWeight(1).fadeIn(duration).play();
-                currentAction = nextAction;
+        function switchMotion(id, gap = 0.2) {
+            const target = motionLib[id];
+            if (target && activeMotion !== target) {
+                if (activeMotion) activeMotion.fadeOut(gap);
+                target.reset().setEffectiveTimeScale(1).setEffectiveWeight(1).fadeIn(gap).play();
+                activeMotion = target;
             }
         }
 
-        async function changeEquip(newSlot) {
-            if (currentEquip === newSlot || isAttacking) return;
-            
-            if (currentEquip === 3) {
-                isCharging = false;
-                if (vfxGround) vfxGround.visible = false;
-                if (vfxFront) vfxFront.visible = false;
-                fadeToAction('magic_end', 0.2);
+        async function updateMode(idx) {
+            if (activeIdx === idx || procActive) return;
+            if (activeIdx === 3) {
+                isStandby = false;
+                if (baseVfx) baseVfx.visible = false;
+                if (handVfx) handVfx.visible = false;
+                switchMotion('m_end', 0.2);
                 await new Promise(r => setTimeout(r, 400));
             }
-
-            currentEquip = newSlot;
-            document.querySelectorAll('.slot').forEach((s, i) => s.classList.toggle('active', i === newSlot - 1));
-            if (swordMesh) swordMesh.visible = (newSlot === 2);
-
-            if (newSlot === 3) {
-                isCharging = true;
-                fadeToAction('magic_start', 0.2);
-                
-                if (vfxGround) {
-                    vfxGround.visible = true;
-                    vfxGround.position.y = -1.0;
-                    if (vfxMixer) {
-                        const chargeAnim = vfxMixer.clipAction(vfxGround.animations[0]);
-                        chargeAnim.reset().play();
-                    }
+            activeIdx = idx;
+            document.querySelectorAll('.item-slot').forEach((s, i) => s.classList.toggle('selected', i === idx - 1));
+            if (subAsset) subAsset.visible = (idx === 2);
+            if (idx === 3) {
+                isStandby = true;
+                switchMotion('m_start', 0.2);
+                if (baseVfx) {
+                    baseVfx.visible = true;
+                    baseVfx.position.y = -1.0;
+                    if (effectMixer) effectMixer.clipAction(baseVfx.animations[0]).reset().play();
                 }
-
-                if (vfxFront) {
-                    vfxFront.visible = true;
-                    // さらに3分の1（0.11の3分の1 ＝ 約0.037）に縮小
-                    vfxFront.scale.set(0.037, 0.037, 0.037); 
+                if (handVfx) {
+                    handVfx.visible = true;
+                    handVfx.scale.set(0.037, 0.037, 0.037); 
                 }
-
-                setTimeout(() => { if (currentEquip === 3) isCharging = false; }, 5000);
+                setTimeout(() => { if (activeIdx === 3) isStandby = false; }, 5000);
             } else {
-                updateMotion();
+                refreshMove();
             }
         }
 
-        function fireMagicBall() {
-            if (!leftHandBone) return;
-            const handPos = new THREE.Vector3();
-            leftHandBone.getWorldPosition(handPos);
-
-            // magicball.glb をそのまま飛ばす（マテリアル上書きなし）
-            loader.load('./magicball.glb', (gltf) => {
-                const ball = gltf.scene;
-                ball.position.copy(handPos);
-                
-                const direction = new THREE.Vector3(0, 0, 1).applyQuaternion(model.quaternion);
-                scene.add(ball);
-                magicBalls.push({ mesh: ball, dir: direction, life: 100 });
+        function emitObj() {
+            if (!l_mount) return;
+            const pos = new THREE.Vector3();
+            l_mount.getWorldPosition(pos);
+            gltfLoader.load('./magicball.glb', (data) => {
+                const obj = data.scene;
+                obj.position.copy(pos);
+                const vec = new THREE.Vector3(0, 0, 1).applyQuaternion(coreModel.quaternion);
+                scene.add(obj);
+                projectiles.push({ mesh: obj, v: vec, ttl: 100 });
             });
         }
 
-        function performAttack() {
-            if (isAttacking || isJumping || isCharging) return;
-            isAttacking = true;
-            let anim = (currentEquip === 2) ? 'sword_attack' : (currentEquip === 3 ? 'magic_fire' : 'punch');
-            
-            if (currentEquip === 3) fireMagicBall();
-            
-            fadeToAction(anim, 0.1);
-            setTimeout(() => { 
-                isAttacking = false; 
-                updateMotion(); 
-            }, 800);
+        function triggerAction() {
+            if (procActive || inAir || isStandby) return;
+            procActive = true;
+            let mId = (activeIdx === 2) ? 'm_action2' : (activeIdx === 3 ? 'm_action3' : 'm_action1');
+            if (activeIdx === 3) emitObj();
+            switchMotion(mId, 0.1);
+            setTimeout(() => { procActive = false; refreshMove(); }, 800);
         }
 
-        function updateMotion() {
-            if (isAttacking || isJumping || (currentEquip === 3)) return;
-            let inputX = (moveState.q ? -1 : 0) + (moveState.c ? 1 : 0);
-            let inputZ = (moveState.e ? -1 : 0) + (moveState.s ? 1 : 0);
-            const isMoving = (inputX !== 0 || inputZ !== 0);
-
-            if (isMoving) {
-                const onlyForward = (moveState.e && !moveState.s && !moveState.q && !moveState.c);
-                if (isCrouching) fadeToAction('crouch_walk', 0.2);
-                else if (onlyForward) fadeToAction('run', 0.2);
-                else fadeToAction('walk', 0.2);
+        function refreshMove() {
+            if (procActive || inAir || (activeIdx === 3)) return;
+            let dx = (keys.q ? -1 : 0) + (keys.c ? 1 : 0);
+            let dz = (keys.e ? -1 : 0) + (keys.s ? 1 : 0);
+            if (dx !== 0 || dz !== 0) {
+                if (isLowPos) switchMotion('m_low_walk', 0.2);
+                else if (keys.e && !keys.s && !keys.q && !keys.c) switchMotion('m_fast', 0.2);
+                else switchMotion('m_walk', 0.2);
             } else {
-                if (currentEquip === 2) fadeToAction('sword_idle', 0.2);
-                else fadeToAction(isCrouching ? 'crouch_idle' : 'idle', 0.2);
+                if (activeIdx === 2) switchMotion('m_idle2', 0.2);
+                else switchMotion(isLowPos ? 'm_low_idle' : 'm_idle1', 0.2);
             }
         }
 
@@ -157,172 +136,139 @@
             document.body.addEventListener('mousedown', (e) => {
                 if(document.pointerLockElement !== document.body) {
                     document.body.requestPointerLock();
-                    document.getElementById('overlay').style.display = 'none';
-                } else if (e.button === 0) performAttack();
+                    document.getElementById('gui-overlay').style.display = 'none';
+                } else if (e.button === 0) triggerAction();
             });
 
-            loader.load('./magic.glb', (gltf) => { 
-                vfxGround = gltf.scene; 
-                vfxGround.visible = false; 
-                vfxGround.animations = gltf.animations;
-                vfxMixer = new THREE.AnimationMixer(vfxGround);
-                scene.add(vfxGround); 
+            gltfLoader.load('./magic.glb', (d) => { 
+                baseVfx = d.scene; baseVfx.visible = false; baseVfx.animations = d.animations;
+                effectMixer = new THREE.AnimationMixer(baseVfx); scene.add(baseVfx); 
             });
-            loader.load('./magic2.glb', (gltf) => { 
-                vfxFront = gltf.scene; 
-                vfxFront.visible = false; 
-                scene.add(vfxFront); 
-            });
+            gltfLoader.load('./magic2.glb', (d) => { handVfx = d.scene; handVfx.visible = false; scene.add(handVfx); });
 
-            loader.load('./m.glb', (gltf) => {
-                model = gltf.scene;
-                scene.add(model);
-                mixer = new THREE.AnimationMixer(model);
-
-                model.traverse(n => {
+            gltfLoader.load('./m.glb', (d) => {
+                coreModel = d.scene; scene.add(coreModel);
+                mainMixer = new THREE.AnimationMixer(coreModel);
+                coreModel.traverse(n => {
                     if(n.isBone) {
-                        const name = n.name.toLowerCase();
-                        if(name.includes("hand") && name.includes("l")) leftHandBone = n;
-                        if(name.includes("hand") && name.includes("r")) rightHandBone = n;
+                        const nm = n.name.toLowerCase();
+                        if(nm.includes("hand") && nm.includes("l")) l_mount = n;
+                        if(nm.includes("hand") && nm.includes("r")) r_mount = n;
                     }
                 });
 
-                loader.load('./sword.glb', (gltf) => {
-                    swordMesh = gltf.scene;
-                    swordMesh.visible = false;
-                    if(rightHandBone) {
-                        rightHandBone.add(swordMesh);
-                        swordMesh.rotation.x = Math.PI / 2;
-                        swordMesh.rotation.z = Math.PI;
-                    }
+                gltfLoader.load('./sword.glb', (sd) => {
+                    subAsset = sd.scene; subAsset.visible = false;
+                    if(r_mount) { r_mount.add(subAsset); subAsset.rotation.set(Math.PI/2, 0, Math.PI); }
                 });
 
-                ['./a.glb', './b.glb'].forEach(url => {
-                    loader.load(url, (animGltf) => {
-                        animGltf.animations.forEach((clip, index) => {
+                ['./a.glb', './b.glb'].forEach(u => {
+                    gltfLoader.load(u, (ad) => {
+                        ad.animations.forEach((clip, i) => {
                             clip.tracks = clip.tracks.filter(t => !t.name.endsWith('.position'));
-                            const action = mixer.clipAction(clip);
-                            if (clip.name === 'Idle_Loop') actions['idle'] = action;
-                            if (clip.name === 'Walk_Loop') actions['walk'] = action;
-                            if (clip.name === 'Sprint_Loop') actions['run'] = action;
-                            if (clip.name === 'Jump_Start') { actions['jump_start'] = action; action.setLoop(THREE.LoopOnce); action.clampWhenFinished = true; }
-                            if (clip.name === 'Jump_Loop') actions['jump_loop'] = action;
-                            if (clip.name === 'Jump_Land') { actions['jump_land'] = action; action.setLoop(THREE.LoopOnce); action.clampWhenFinished = true; }
-                            
-                            if (url === './b.glb') {
-                                if (index === 1) actions['crouch_walk'] = action;
-                                if (index === 2) actions['crouch_idle'] = action;
-                                if (index === 25) { actions['punch'] = action; action.setLoop(THREE.LoopOnce); action.clampWhenFinished = true; }
-                                if (index === 42) actions['sword_idle'] = action;
-                                if (index === 40) { actions['sword_attack'] = action; action.setLoop(THREE.LoopOnce); action.clampWhenFinished = true; }
-                                if (index === 33) { actions['magic_start'] = action; action.setLoop(THREE.LoopOnce); action.clampWhenFinished = true; }
-                                if (index === 35) actions['magic_pose'] = action;
-                                if (index === 36) { actions['magic_fire'] = action; action.setLoop(THREE.LoopOnce); action.clampWhenFinished = true; }
-                                if (index === 34) { actions['magic_end'] = action; action.setLoop(THREE.LoopOnce); action.clampWhenFinished = true; }
+                            const act = mainMixer.clipAction(clip);
+                            if (clip.name === 'Idle_Loop') motionLib['m_idle1'] = act;
+                            if (clip.name === 'Walk_Loop') motionLib['m_walk'] = act;
+                            if (clip.name === 'Sprint_Loop') motionLib['m_fast'] = act;
+                            if (clip.name === 'Jump_Start') { motionLib['m_j_s'] = act; act.setLoop(THREE.LoopOnce); act.clampWhenFinished = true; }
+                            if (clip.name === 'Jump_Loop') motionLib['m_j_l'] = act;
+                            if (clip.name === 'Jump_Land') { motionLib['m_j_e'] = act; act.setLoop(THREE.LoopOnce); act.clampWhenFinished = true; }
+                            if (u === './b.glb') {
+                                if (i === 1) motionLib['m_low_walk'] = act;
+                                if (i === 2) motionLib['m_low_idle'] = act;
+                                if (i === 25) { motionLib['m_action1'] = act; act.setLoop(THREE.LoopOnce); act.clampWhenFinished = true; }
+                                if (i === 42) motionLib['m_idle2'] = act;
+                                if (i === 40) { motionLib['m_action2'] = act; act.setLoop(THREE.LoopOnce); act.clampWhenFinished = true; }
+                                if (i === 33) { motionLib['m_start'] = act; act.setLoop(THREE.LoopOnce); act.clampWhenFinished = true; }
+                                if (i === 35) motionLib['m_pose'] = act;
+                                if (i === 36) { motionLib['m_action3'] = act; act.setLoop(THREE.LoopOnce); act.clampWhenFinished = true; }
+                                if (i === 34) { motionLib['m_end'] = act; act.setLoop(THREE.LoopOnce); act.clampWhenFinished = true; }
                             }
                         });
-                        if (actions['idle']) fadeToAction('idle');
+                        if (motionLib['m_idle1']) switchMotion('m_idle1');
                     });
                 });
             });
 
             window.onkeydown = (e) => {
                 const k = e.key.toLowerCase();
-                if (['e','s','q','c'].includes(k)) moveState[k] = true;
-                if (k === 'v') isCrouching = !isCrouching;
-                // --- 【修正：魔法装備中はジャンプ禁止】 ---
-                if (k === ' ' && !isJumping && canJump && currentEquip !== 3) { 
-                    isJumping = true; canJump = false; velocityY = 0.18; 
-                    fadeToAction('jump_start', 0.1); 
+                if (['e','s','q','c'].includes(k)) keys[k] = true;
+                if (k === 'v') isLowPos = !isLowPos;
+                if (k === ' ' && !inAir && jumpReady && activeIdx !== 3) { 
+                    inAir = true; jumpReady = false; vertVel = 0.18; switchMotion('m_j_s', 0.1); 
                 }
-                if (['1','2','3'].includes(k)) changeEquip(parseInt(k));
+                if (['1','2','3'].includes(k)) updateMode(parseInt(k));
             };
-            window.onkeyup = (e) => { if (['e','s','q','c'].includes(e.key.toLowerCase())) moveState[e.key.toLowerCase()] = false; };
+            window.onkeyup = (e) => { if (['e','s','q','c'].includes(e.key.toLowerCase())) keys[e.key.toLowerCase()] = false; };
             window.addEventListener('mousemove', (e) => { 
                 if (document.pointerLockElement === document.body) { 
-                    cameraAzimuth -= e.movementX * 0.002; 
-                    cameraElevation = Math.max(-0.7, Math.min(1.1, cameraElevation + e.movementY * 0.002)); 
+                    camRotX -= e.movementX * 0.002; 
+                    camRotY = Math.max(-0.7, Math.min(1.1, camRotY + e.movementY * 0.002)); 
                 } 
             });
 
             clock = new THREE.Clock();
-            function animate() {
-                requestAnimationFrame(animate);
-                const delta = clock.getDelta();
-                if (mixer) mixer.update(delta);
-                if (vfxMixer) vfxMixer.update(delta);
+            function run() {
+                requestAnimationFrame(run);
+                const dt = clock.getDelta();
+                if (mainMixer) mainMixer.update(dt);
+                if (effectMixer) effectMixer.update(dt);
 
-                if (model) {
-                    const canMove = !isAttacking && currentEquip !== 3;
-                    let inputX = (moveState.q ? -1 : 0) + (moveState.c ? 1 : 0);
-                    let inputZ = (moveState.e ? -1 : 0) + (moveState.s ? 1 : 0);
-                    const isMoving = (inputX !== 0 || inputZ !== 0);
-
-                    if (canMove && isMoving) {
-                        const targetRotation = Math.atan2(inputX, inputZ) + cameraAzimuth;
-                        let diff = targetRotation - model.rotation.y;
+                if (coreModel) {
+                    const activeMove = !procActive && activeIdx !== 3;
+                    let dx = (keys.q ? -1 : 0) + (keys.c ? 1 : 0);
+                    let dz = (keys.e ? -1 : 0) + (keys.s ? 1 : 0);
+                    if (activeMove && (dx !== 0 || dz !== 0)) {
+                        const targetRot = Math.atan2(dx, dz) + camRotX;
+                        let diff = targetRot - coreModel.rotation.y;
                         while (diff < -Math.PI) diff += Math.PI * 2;
                         while (diff > Math.PI) diff -= Math.PI * 2;
-                        model.rotation.y += diff * 0.15;
-
-                        const onlyForward = (moveState.e && !moveState.s && !moveState.q && !moveState.c);
-                        const speed = (onlyForward && !isCrouching) ? 0.14 : 0.07;
-                        model.position.x += Math.sin(model.rotation.y) * speed;
-                        model.position.z += Math.cos(model.rotation.y) * speed;
+                        coreModel.rotation.y += diff * 0.15;
+                        const s = (keys.e && !keys.s && !keys.q && !keys.c && !isLowPos) ? 0.14 : 0.07;
+                        coreModel.position.x += Math.sin(coreModel.rotation.y) * s;
+                        coreModel.position.z += Math.cos(coreModel.rotation.y) * s;
                     }
-                    updateMotion();
+                    refreshMove();
 
-                    if (vfxGround && vfxGround.visible) {
-                        vfxGround.position.set(model.position.x, vfxGround.position.y, model.position.z);
-                        if (vfxGround.position.y < 0) vfxGround.position.y += 0.01;
-                        vfxGround.rotation.y += 0.02;
+                    if (baseVfx && baseVfx.visible) {
+                        baseVfx.position.set(coreModel.position.x, baseVfx.position.y, coreModel.position.z);
+                        if (baseVfx.position.y < 0) baseVfx.position.y += 0.01;
+                        baseVfx.rotation.y += 0.02;
                     }
-                    if (vfxFront && vfxFront.visible && leftHandBone) {
-                        const handPos = new THREE.Vector3();
-                        leftHandBone.getWorldPosition(handPos);
-                        vfxFront.position.copy(handPos);
-                        // --- 【修正：回転方向と速度を変更】 ---
-                        vfxFront.rotation.x -= 0.05;
-                        vfxFront.rotation.y -= 0.05;
+                    if (handVfx && handVfx.visible && l_mount) {
+                        const p = new THREE.Vector3(); l_mount.getWorldPosition(p);
+                        handVfx.position.copy(p);
+                        handVfx.rotation.x -= 0.05; handVfx.rotation.y -= 0.05;
                     }
-
-                    for (let i = magicBalls.length - 1; i >= 0; i--) {
-                        magicBalls[i].mesh.position.add(magicBalls[i].dir.clone().multiplyScalar(0.4));
-                        if (magicBalls[i].life-- <= 0) { scene.remove(magicBalls[i].mesh); magicBalls.splice(i, 1); }
+                    for (let i = projectiles.length - 1; i >= 0; i--) {
+                        projectiles[i].mesh.position.add(projectiles[i].v.clone().multiplyScalar(0.4));
+                        if (projectiles[i].ttl-- <= 0) { scene.remove(projectiles[i].mesh); projectiles.splice(i, 1); }
                     }
 
-                    if (isJumping) {
-                        model.position.y += velocityY; velocityY -= 0.008;
-                        if (velocityY < 0 && currentAction === actions['jump_start']) fadeToAction('jump_loop', 0.3);
-                        if (model.position.y <= 0) { 
-                            model.position.y = 0; isJumping = false; 
-                            fadeToAction('jump_land', 0.1);
-                            setTimeout(() => { canJump = true; updateMotion(); }, 300);
+                    if (inAir) {
+                        coreModel.position.y += vertVel; vertVel -= 0.008;
+                        if (vertVel < 0 && activeMotion === motionLib['m_j_s']) switchMotion('m_j_l', 0.3);
+                        if (coreModel.position.y <= 0) { 
+                            coreModel.position.y = 0; inAir = false; switchMotion('m_j_e', 0.1);
+                            setTimeout(() => { jumpReady = true; refreshMove(); }, 300);
                         }
                     } else {
-                        const targetY = (isCrouching && currentEquip !== 3) ? -0.4 : 0;
-                        model.position.y += (targetY - model.position.y) * 0.1;
+                        const ty = (isLowPos && activeIdx !== 3) ? -0.4 : 0;
+                        coreModel.position.y += (ty - coreModel.position.y) * 0.1;
                     }
 
-                    const camDist = 2.4, camSide = 1.0, camHeight = 1.5;
-                    const hDist = camDist * Math.cos(cameraElevation);
-                    const vDist = camDist * Math.sin(cameraElevation);
-                    let camX = model.position.x + hDist * Math.sin(cameraAzimuth);
-                    let camZ = model.position.z + hDist * Math.cos(cameraAzimuth);
-                    let camY = model.position.y + camHeight + vDist;
-                    camX += Math.cos(cameraAzimuth) * camSide;
-                    camZ -= Math.sin(cameraAzimuth) * camSide;
-                    camera.position.set(camX, camY, camZ);
-                    const lookTarget = new THREE.Vector3(
-                        camera.position.x - Math.sin(cameraAzimuth) * 20,
-                        camera.position.y - Math.sin(cameraElevation) * 20,
-                        camera.position.z - Math.cos(cameraAzimuth) * 20
-                    );
-                    camera.lookAt(lookTarget);
+                    const d = 2.4, sh = 1.0, h = 1.5;
+                    const hd = d * Math.cos(camRotY), vd = d * Math.sin(camRotY);
+                    let cx = coreModel.position.x + hd * Math.sin(camRotX);
+                    let cz = coreModel.position.z + hd * Math.cos(camRotX);
+                    let cy = coreModel.position.y + h + vd;
+                    cx += Math.cos(camRotX) * sh; cz -= Math.sin(camRotX) * sh;
+                    camera.position.set(cx, cy, cz);
+                    camera.lookAt(new THREE.Vector3(cx - Math.sin(camRotX) * 20, cy - Math.sin(camRotY) * 20, cz - Math.cos(camRotX) * 20));
                 }
                 renderer.render(scene, camera);
             }
-            animate();
+            run();
         };
     </script>
 </body>
