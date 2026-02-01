@@ -306,13 +306,13 @@
                     subAsset = sd.scene; 
                     subAsset.visible = false;
                     
-                    // サイズ調整（小さくする）
-                    subAsset.scale.set(0.8, 0.8, 0.8);
+                    // サイズを1/4に調整
+                    subAsset.scale.set(0.2, 0.2, 0.2);
                     
                     if(r_mount) { 
                         r_mount.add(subAsset); 
-                        // 位置と回転を調整
-                        subAsset.position.set(0, 0, 0); // ボーンの位置を基準
+                        // 位置を前に調整（Z軸がキャラの前方向）
+                        subAsset.position.set(0, 0, 0.3); 
                         subAsset.rotation.set(0, 0, Math.PI); // Z軸180度回転
                     }
                 });
