@@ -2,6 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>新しいタブ</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/loaders/GLTFLoader.js"></script>
@@ -18,10 +19,16 @@
             display: flex; align-items: center; justify-content: center; color: white; font-size: 10px; font-weight: bold;
         }
         .item-slot.selected { border-color: #ffaa00; background: rgba(255, 170, 0, 0.4); }
+        #aim-mark {
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 8px; height: 8px; border: 2px solid rgba(0, 255, 0, 0.8);
+            border-radius: 50%; pointer-events: none; z-index: 100;
+        }
     </style>
 </head>
 <body>
-    <div id="gui-overlay">START APPLICATION<br>(1, 2, 3 / V: Squat)</div>
+    <div id="gui-overlay">START APPLICATION<br>(Keys 1, 2, 3 / V: Squat)</div>
+    <div id="aim-mark"></div>
     <div id="ui-bar">
         <div class="item-slot selected" id="s-1">Mode 1</div>
         <div class="item-slot" id="s-2">Mode 2</div>
@@ -30,11 +37,12 @@
 
     <script>
         let scene, camera, renderer, clock, mainMixer, coreModel;
-        let vfxGroundMixer, vfxHandMixer; // それぞれ個別にミキサーを保持
+        let effectMixer;
         let keys = { q: false, e: false, c: false, s: false };
         let vertVel = 0, inAir = false, jumpReady = true, isLowPos = false, procActive = false;
         let activeIdx = 1, motionLib = {}, activeMotion;
-        let r_mount, l_mount, subAsset, baseVfx, handVfx, projectiles = [], camRotX = 0, camRotY = 0.2;
+        let r_mount, l_mount, subAsset;
+        let baseVfx, handVfx, projectiles = [], camRotX = 0, camRotY = 0.2;
         let isStandby = false;
         const gltfLoader = new THREE.GLTFLoader();
 
@@ -65,38 +73,30 @@
                 if (baseVfx) {
                     baseVfx.visible = true;
                     baseVfx.position.y = -1.0;
-                    if (vfxGroundMixer) vfxGroundMixer.clipAction(baseVfx.animations[0]).reset().play();
+                    if (effectMixer) effectMixer.clipAction(baseVfx.animations[0]).reset().play();
                 }
                 if (handVfx) {
                     handVfx.visible = true;
-                    handVfx.scale.set(0.11, 0.11, 0.11);
-                    handVfx.rotation.set(Math.PI / 2, 0, 0); // 垂直に立てる
+                    // --- 修正：サイズを前回の3倍(0.11)に大きく設定 ---
+                    handVfx.scale.set(0.11, 0.11, 0.11); 
                 }
                 setTimeout(() => { if (activeIdx === 3) isStandby = false; }, 5000);
-            } else { refreshMove(); }
+            } else {
+                refreshMove();
+            }
         }
 
         function emitObj() {
             if (!l_mount) return;
             const pos = new THREE.Vector3();
             l_mount.getWorldPosition(pos);
-            const offset = new THREE.Vector3(0, 0, 0.5).applyQuaternion(coreModel.quaternion);
-            pos.add(offset);
-
             gltfLoader.load('./magicball.glb', (data) => {
                 const obj = data.scene;
                 obj.position.copy(pos);
-                scene.add(obj);
-                
-                // 弾丸のアニメーション再生（もしあれば）
-                let bMixer = null;
-                if (data.animations.length > 0) {
-                    bMixer = new THREE.AnimationMixer(obj);
-                    data.animations.forEach(clip => bMixer.clipAction(clip).play());
-                }
-                
+                // モデル本来の見た目を活かす
                 const vec = new THREE.Vector3(0, 0, 1).applyQuaternion(coreModel.quaternion);
-                projectiles.push({ mesh: obj, v: vec, ttl: 100, mixer: bMixer });
+                scene.add(obj);
+                projectiles.push({ mesh: obj, v: vec, ttl: 100 });
             });
         }
 
@@ -111,12 +111,15 @@
 
         function refreshMove() {
             if (procActive || inAir || (activeIdx === 3)) return;
-            let dx = (keys.q ? -1 : 0) + (keys.c ? 1 : 0), dz = (keys.e ? -1 : 0) + (keys.s ? 1 : 0);
+            let dx = (keys.q ? -1 : 0) + (keys.c ? 1 : 0);
+            let dz = (keys.e ? -1 : 0) + (keys.s ? 1 : 0);
             if (dx !== 0 || dz !== 0) {
                 if (isLowPos) switchMotion('m_low_walk', 0.2);
-                else switchMotion((keys.e && !keys.s) ? 'm_fast' : 'm_walk', 0.2);
+                else if (keys.e && !keys.s && !keys.q && !keys.c) switchMotion('m_fast', 0.2);
+                else switchMotion('m_walk', 0.2);
             } else {
-                switchMotion(activeIdx === 2 ? 'm_idle2' : (isLowPos ? 'm_low_idle' : 'm_idle1'), 0.2);
+                if (activeIdx === 2) switchMotion('m_idle2', 0.2);
+                else switchMotion(isLowPos ? 'm_low_idle' : 'm_idle1', 0.2);
             }
         }
 
@@ -126,22 +129,24 @@
             camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
             document.body.appendChild(renderer.domElement);
-            clock = new THREE.Clock();
 
             scene.add(new THREE.HemisphereLight(0xffffff, 0x888888, 1.5));
             scene.add(new THREE.GridHelper(500, 100, 0x999999, 0xcccccc));
 
+            document.body.addEventListener('mousedown', (e) => {
+                if(document.pointerLockElement !== document.body) {
+                    document.body.requestPointerLock();
+                    document.getElementById('gui-overlay').style.display = 'none';
+                } else if (e.button === 0) triggerAction();
+            });
+
             gltfLoader.load('./magic.glb', (d) => { 
                 baseVfx = d.scene; baseVfx.visible = false; baseVfx.animations = d.animations;
-                vfxGroundMixer = new THREE.AnimationMixer(baseVfx); scene.add(baseVfx); 
+                effectMixer = new THREE.AnimationMixer(baseVfx); scene.add(baseVfx); 
             });
-            gltfLoader.load('./magic2.glb', (d) => { 
-                handVfx = d.scene; handVfx.visible = false; 
-                vfxHandMixer = new THREE.AnimationMixer(handVfx);
-                if(d.animations.length > 0) d.animations.forEach(c => vfxHandMixer.clipAction(c).play());
-                scene.add(handVfx); 
-            });
+            gltfLoader.load('./magic2.glb', (d) => { handVfx = d.scene; handVfx.visible = false; scene.add(handVfx); });
 
             gltfLoader.load('./m.glb', (d) => {
                 coreModel = d.scene; scene.add(coreModel);
@@ -177,6 +182,7 @@
                                 if (i === 42) motionLib['m_idle2'] = act;
                                 if (i === 40) { motionLib['m_action2'] = act; act.setLoop(THREE.LoopOnce); act.clampWhenFinished = true; }
                                 if (i === 33) { motionLib['m_start'] = act; act.setLoop(THREE.LoopOnce); act.clampWhenFinished = true; }
+                                if (i === 35) motionLib['m_pose'] = act;
                                 if (i === 36) { motionLib['m_action3'] = act; act.setLoop(THREE.LoopOnce); act.clampWhenFinished = true; }
                                 if (i === 34) { motionLib['m_end'] = act; act.setLoop(THREE.LoopOnce); act.clampWhenFinished = true; }
                             }
@@ -190,67 +196,83 @@
                 const k = e.key.toLowerCase();
                 if (['e','s','q','c'].includes(k)) keys[k] = true;
                 if (k === 'v') isLowPos = !isLowPos;
+                // 魔法装備時はジャンプ不可
                 if (k === ' ' && !inAir && jumpReady && activeIdx !== 3) { 
                     inAir = true; jumpReady = false; vertVel = 0.18; switchMotion('m_j_s', 0.1); 
                 }
                 if (['1','2','3'].includes(k)) updateMode(parseInt(k));
             };
             window.onkeyup = (e) => { if (['e','s','q','c'].includes(e.key.toLowerCase())) keys[e.key.toLowerCase()] = false; };
-            window.addEventListener('mousemove', (e) => { if (document.pointerLockElement === document.body) { camRotX -= e.movementX * 0.002; camRotY = Math.max(-0.7, Math.min(1.1, camRotY + e.movementY * 0.002)); } });
-            document.body.addEventListener('mousedown', () => { if(document.pointerLockElement !== document.body) { document.body.requestPointerLock(); document.getElementById('gui-overlay').style.display = 'none'; } else triggerAction(); });
+            window.addEventListener('mousemove', (e) => { 
+                if (document.pointerLockElement === document.body) { 
+                    camRotX -= e.movementX * 0.002; 
+                    camRotY = Math.max(-0.7, Math.min(1.1, camRotY + e.movementY * 0.002)); 
+                } 
+            });
 
-            function animate() {
-                requestAnimationFrame(animate);
+            clock = new THREE.Clock();
+            function run() {
+                requestAnimationFrame(run);
                 const dt = clock.getDelta();
                 if (mainMixer) mainMixer.update(dt);
-                if (vfxGroundMixer) vfxGroundMixer.update(dt);
-                if (vfxHandMixer) vfxHandMixer.update(dt);
+                if (effectMixer) effectMixer.update(dt);
 
                 if (coreModel) {
-                    if (!procActive && activeIdx !== 3) {
-                        let dx = (keys.q ? -1 : 0) + (keys.c ? 1 : 0), dz = (keys.e ? -1 : 0) + (keys.s ? 1 : 0);
-                        if (dx !== 0 || dz !== 0) {
-                            const targetRot = Math.atan2(dx, dz) + camRotX;
-                            let diff = targetRot - coreModel.rotation.y;
-                            while (diff < -Math.PI) diff += Math.PI * 2;
-                            while (diff > Math.PI) diff -= Math.PI * 2;
-                            coreModel.rotation.y += diff * 0.15;
-                            const speed = (keys.e && !keys.s && !isLowPos) ? 0.14 : 0.07;
-                            coreModel.position.x += Math.sin(coreModel.rotation.y) * speed;
-                            coreModel.position.z += Math.cos(coreModel.rotation.y) * speed;
-                        }
+                    const activeMove = !procActive && activeIdx !== 3;
+                    let dx = (keys.q ? -1 : 0) + (keys.c ? 1 : 0);
+                    let dz = (keys.e ? -1 : 0) + (keys.s ? 1 : 0);
+                    if (activeMove && (dx !== 0 || dz !== 0)) {
+                        const targetRot = Math.atan2(dx, dz) + camRotX;
+                        let diff = targetRot - coreModel.rotation.y;
+                        while (diff < -Math.PI) diff += Math.PI * 2;
+                        while (diff > Math.PI) diff -= Math.PI * 2;
+                        coreModel.rotation.y += diff * 0.15;
+                        const s = (keys.e && !keys.s && !keys.q && !keys.c && !isLowPos) ? 0.14 : 0.07;
+                        coreModel.position.x += Math.sin(coreModel.rotation.y) * s;
+                        coreModel.position.z += Math.cos(coreModel.rotation.y) * s;
                     }
                     refreshMove();
 
                     if (baseVfx && baseVfx.visible) {
                         baseVfx.position.set(coreModel.position.x, baseVfx.position.y, coreModel.position.z);
                         if (baseVfx.position.y < 0) baseVfx.position.y += 0.01;
+                        baseVfx.rotation.y += 0.02;
                     }
                     if (handVfx && handVfx.visible && l_mount) {
                         const p = new THREE.Vector3(); l_mount.getWorldPosition(p);
-                        const offset = new THREE.Vector3(0, 0, 0.3).applyQuaternion(coreModel.quaternion);
-                        handVfx.position.copy(p).add(offset);
-                        handVfx.rotation.y = coreModel.rotation.y;
+                        handVfx.position.copy(p);
+                        // 逆回転
+                        handVfx.rotation.x -= 0.05; handVfx.rotation.y -= 0.05;
                     }
                     for (let i = projectiles.length - 1; i >= 0; i--) {
                         projectiles[i].mesh.position.add(projectiles[i].v.clone().multiplyScalar(0.4));
-                        if (projectiles[i].mixer) projectiles[i].mixer.update(dt);
                         if (projectiles[i].ttl-- <= 0) { scene.remove(projectiles[i].mesh); projectiles.splice(i, 1); }
                     }
 
                     if (inAir) {
                         coreModel.position.y += vertVel; vertVel -= 0.008;
-                        if (coreModel.position.y <= 0) { coreModel.position.y = 0; inAir = false; setTimeout(() => { jumpReady = true; refreshMove(); }, 300); }
+                        if (vertVel < 0 && activeMotion === motionLib['m_j_s']) switchMotion('m_j_l', 0.3);
+                        if (coreModel.position.y <= 0) { 
+                            coreModel.position.y = 0; inAir = false; switchMotion('m_j_e', 0.1);
+                            setTimeout(() => { jumpReady = true; refreshMove(); }, 300);
+                        }
                     } else {
                         const ty = (isLowPos && activeIdx !== 3) ? -0.4 : 0;
                         coreModel.position.y += (ty - coreModel.position.y) * 0.1;
                     }
-                    camera.position.set(coreModel.position.x + (2.4 * Math.cos(camRotY)) * Math.sin(camRotX), coreModel.position.y + 1.5 + (2.4 * Math.sin(camRotY)), coreModel.position.z + (2.4 * Math.cos(camRotY)) * Math.cos(camRotX));
-                    camera.lookAt(coreModel.position.x, coreModel.position.y + 1.2, coreModel.position.z);
+
+                    const d = 2.4, sh = 1.0, h = 1.5;
+                    const hd = d * Math.cos(camRotY), vd = d * Math.sin(camRotY);
+                    let cx = coreModel.position.x + hd * Math.sin(camRotX);
+                    let cz = coreModel.position.z + hd * Math.cos(camRotX);
+                    let cy = coreModel.position.y + h + vd;
+                    cx += Math.cos(camRotX) * sh; cz -= Math.sin(camRotX) * sh;
+                    camera.position.set(cx, cy, cz);
+                    camera.lookAt(new THREE.Vector3(cx - Math.sin(camRotX) * 20, cy - Math.sin(camRotY) * 20, cz - Math.cos(camRotX) * 20));
                 }
                 renderer.render(scene, camera);
             }
-            animate();
+            run();
         };
     </script>
 </body>
