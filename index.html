@@ -22,8 +22,7 @@
     </style>
 </head>
 <body>
-    <div id="overlay">CLICK TO START<br>(1:殴り 2:剣 3:魔法)</div>
-
+    <div id="overlay">CLICK TO START<br>(1:殴り 2:剣 3:魔法 / V:しゃがみ)</div>
     <div id="inventory">
         <div class="slot active" id="slot-1">殴り</div>
         <div class="slot" id="slot-2">剣</div>
@@ -35,7 +34,7 @@
         let moveState = { q: false, e: false, c: false, s: false };
         let velocityY = 0, isJumping = false, canJump = true, isCrouching = false, isAttacking = false;
         let currentEquip = 1, actions = {}, currentAction;
-        let rightHandBone, leftHandBone, swordMesh; // ボーンと武器の変数
+        let rightHandBone, leftHandBone, swordMesh;
         let vfxGround, vfxFront, magicBalls = [], cameraAzimuth = 0, cameraElevation = 0.2;
         const loader = new THREE.GLTFLoader();
 
@@ -50,38 +49,28 @@
 
         async function changeEquip(newSlot) {
             if (currentEquip === newSlot || isAttacking) return;
-            
-            // 魔法解除のアニメーション
             if (currentEquip === 3) {
                 fadeToAction('magic_end', 0.2);
                 await new Promise(r => setTimeout(r, 400));
             }
-
             currentEquip = newSlot;
             document.querySelectorAll('.slot').forEach((s, i) => s.classList.toggle('active', i === newSlot - 1));
-
-            // 剣の表示・非表示切り替え
             if (swordMesh) swordMesh.visible = (newSlot === 2);
-
             if (newSlot === 3) fadeToAction('magic_start', 0.2);
             else updateMotion();
         }
 
         function fireMagicBall() {
             if (!leftHandBone || !vfxFront) return;
-
-            // 左手の座標を取得
             const handPos = new THREE.Vector3();
             leftHandBone.getWorldPosition(handPos);
 
-            // 発射魔法陣（左手位置、1/3サイズ）
             vfxFront.visible = true;
-            vfxFront.scale.set(0.33, 0.33, 0.33);
+            vfxFront.scale.set(0.33, 0.33, 0.33); // 3分の1
             vfxFront.position.copy(handPos);
             vfxFront.quaternion.copy(model.quaternion);
             setTimeout(() => { vfxFront.visible = false; }, 500);
 
-            // 魔法弾（左手から発射）
             loader.load('./magicball.glb', (gltf) => {
                 const ball = gltf.scene;
                 ball.position.copy(handPos);
@@ -94,16 +83,10 @@
         function performAttack() {
             if (isAttacking || isJumping) return;
             isAttacking = true;
-
             let anim = (currentEquip === 2) ? 'sword_attack' : (currentEquip === 3 ? 'magic_fire' : 'punch');
             if (currentEquip === 3) fireMagicBall();
-
             fadeToAction(anim, 0.1);
-            
-            setTimeout(() => {
-                isAttacking = false;
-                updateMotion();
-            }, 800);
+            setTimeout(() => { isAttacking = false; updateMotion(); }, 800);
         }
 
         function updateMotion() {
@@ -113,8 +96,10 @@
             const isMoving = (inputX !== 0 || inputZ !== 0);
 
             if (isMoving) {
+                const onlyForward = (moveState.e && !moveState.s && !moveState.q && !moveState.c);
                 if (isCrouching) fadeToAction('crouch_walk', 0.2);
-                else fadeToAction((moveState.e && !moveState.s && !moveState.q && !moveState.c) ? 'run' : 'walk', 0.2);
+                else if (onlyForward) fadeToAction('run', 0.2);
+                else fadeToAction('walk', 0.2);
             } else {
                 if (currentEquip === 2) fadeToAction('sword_idle', 0.2);
                 else if (currentEquip === 3) fadeToAction('magic_pose', 0.3);
@@ -140,7 +125,6 @@
                 } else if (e.button === 0) performAttack();
             });
 
-            // 素材ロード
             loader.load('./magic.glb', (gltf) => { vfxGround = gltf.scene; vfxGround.visible = false; scene.add(vfxGround); });
             loader.load('./magic2.glb', (gltf) => { vfxFront = gltf.scene; vfxFront.visible = false; scene.add(vfxFront); });
 
@@ -149,7 +133,6 @@
                 scene.add(model);
                 mixer = new THREE.AnimationMixer(model);
 
-                // 両手のボーンを特定
                 model.traverse(n => {
                     if(n.isBone) {
                         const name = n.name.toLowerCase();
@@ -158,15 +141,13 @@
                     }
                 });
 
-                // 剣のロードと右手への装備
                 loader.load('./sword.glb', (gltf) => {
                     swordMesh = gltf.scene;
-                    swordMesh.visible = false; // 最初は隠す
+                    swordMesh.visible = false;
                     if(rightHandBone) {
                         rightHandBone.add(swordMesh);
-                        // 剣の位置や向きの微調整（モデルに合わせて適宜変更してください）
                         swordMesh.rotation.x = Math.PI / 2;
-                        swordMesh.position.set(0, 0, 0);
+                        swordMesh.rotation.z = Math.PI; 
                     }
                 });
 
@@ -178,19 +159,20 @@
                             if (clip.name === 'Idle_Loop') actions['idle'] = action;
                             if (clip.name === 'Walk_Loop') actions['walk'] = action;
                             if (clip.name === 'Sprint_Loop') actions['run'] = action;
-                            if (clip.name.includes('Jump')) actions[clip.name.toLowerCase()] = action;
+                            if (clip.name === 'Jump_Start') { actions['jump_start'] = action; action.setLoop(THREE.LoopOnce); action.clampWhenFinished = true; }
+                            if (clip.name === 'Jump_Loop') actions['jump_loop'] = action;
+                            if (clip.name === 'Jump_Land') { actions['jump_land'] = action; action.setLoop(THREE.LoopOnce); action.clampWhenFinished = true; }
                             
                             if (url === './b.glb') {
                                 if (index === 1) actions['crouch_walk'] = action;
                                 if (index === 2) actions['crouch_idle'] = action;
-                                if (index === 25) actions['punch'] = action;
+                                if (index === 25) { actions['punch'] = action; action.setLoop(THREE.LoopOnce); }
                                 if (index === 42) actions['sword_idle'] = action;
-                                if (index === 40) actions['sword_attack'] = action;
-                                if (index === 33) actions['magic_start'] = action;
+                                if (index === 40) { actions['sword_attack'] = action; action.setLoop(THREE.LoopOnce); }
+                                if (index === 33) { actions['magic_start'] = action; action.setLoop(THREE.LoopOnce); action.clampWhenFinished = true;}
                                 if (index === 35) actions['magic_pose'] = action;
-                                if (index === 36) actions['magic_fire'] = action;
-                                if (index === 34) actions['magic_end'] = action;
-                                if ([25, 40, 33, 34, 36].includes(index)) action.setLoop(THREE.LoopOnce);
+                                if (index === 36) { actions['magic_fire'] = action; action.setLoop(THREE.LoopOnce); }
+                                if (index === 34) { actions['magic_end'] = action; action.setLoop(THREE.LoopOnce); }
                             }
                         });
                         if (actions['idle']) fadeToAction('idle');
@@ -202,7 +184,10 @@
                 const k = e.key.toLowerCase();
                 if (['e','s','q','c'].includes(k)) moveState[k] = true;
                 if (k === 'v') isCrouching = !isCrouching;
-                if (k === ' ' && !isJumping && canJump) { isJumping = true; canJump = false; velocityY = 0.18; fadeToAction('jump_start', 0.1); }
+                if (k === ' ' && !isJumping && canJump) { 
+                    isJumping = true; canJump = false; velocityY = 0.18; 
+                    fadeToAction('jump_start', 0.1); 
+                }
                 if (['1','2','3'].includes(k)) changeEquip(parseInt(k));
             };
             window.onkeyup = (e) => { if (['e','s','q','c'].includes(e.key.toLowerCase())) moveState[e.key.toLowerCase()] = false; };
@@ -216,18 +201,22 @@
                 if (model) {
                     let inputX = (moveState.q ? -1 : 0) + (moveState.c ? 1 : 0);
                     let inputZ = (moveState.e ? -1 : 0) + (moveState.s ? 1 : 0);
-                    if ((inputX !== 0 || inputZ !== 0) && !isAttacking) {
-                        model.rotation.y = Math.atan2(inputX, inputZ) + cameraAzimuth;
-                        let speed = (moveState.e && !isCrouching && !moveState.s && !moveState.q && !moveState.c) ? 0.14 : 0.07;
+                    const isMoving = (inputX !== 0 || inputZ !== 0);
+
+                    if (isMoving && !isAttacking) {
+                        const targetRotation = Math.atan2(inputX, inputZ) + cameraAzimuth;
+                        let diff = targetRotation - model.rotation.y;
+                        while (diff < -Math.PI) diff += Math.PI * 2;
+                        while (diff > Math.PI) diff -= Math.PI * 2;
+                        model.rotation.y += diff * 0.15;
+
+                        const speed = (moveState.e && !isCrouching && !moveState.s && !moveState.q && !moveState.c) ? 0.14 : 0.07;
                         model.position.x += Math.sin(model.rotation.y) * speed;
                         model.position.z += Math.cos(model.rotation.y) * speed;
                     }
                     updateMotion();
 
-                    if (vfxGround) {
-                        vfxGround.visible = (currentEquip === 3);
-                        vfxGround.position.copy(model.position);
-                    }
+                    if (vfxGround && vfxGround.visible) vfxGround.position.copy(model.position);
                     if (vfxFront && vfxFront.visible && leftHandBone) {
                         const handPos = new THREE.Vector3();
                         leftHandBone.getWorldPosition(handPos);
@@ -241,8 +230,15 @@
 
                     if (isJumping) {
                         model.position.y += velocityY; velocityY -= 0.008;
-                        if (model.position.y <= 0) { model.position.y = 0; isJumping = false; canJump = true; fadeToAction('jump_land', 0.1); }
-                    } else { model.position.y += ((isCrouching ? -0.4 : 0) - model.position.y) * 0.1; }
+                        if (velocityY < 0 && currentAction === actions['jump_start']) fadeToAction('jump_loop', 0.3);
+                        if (model.position.y <= 0) { 
+                            model.position.y = 0; isJumping = false; 
+                            fadeToAction('jump_land', 0.1);
+                            setTimeout(() => { canJump = true; updateMotion(); }, 300);
+                        }
+                    } else {
+                        model.position.y += ((isCrouching ? -0.4 : 0) - model.position.y) * 0.1;
+                    }
 
                     const dist = 5;
                     camera.position.set(model.position.x + dist * Math.sin(cameraAzimuth) * Math.cos(cameraElevation), model.position.y + 1.8 + dist * Math.sin(cameraElevation), model.position.z + dist * Math.cos(cameraAzimuth) * Math.cos(cameraElevation));
