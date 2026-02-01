@@ -77,7 +77,9 @@
                 }
                 if (handVfx) {
                     handVfx.visible = true;
-                    handVfx.scale.set(0.11, 0.11, 0.11); 
+                    handVfx.scale.set(0.11, 0.11, 0.11);
+                    // 地面に対して垂直（正面向き）に固定するための初期角度
+                    handVfx.rotation.set(Math.PI / 2, 0, 0); 
                 }
                 setTimeout(() => { if (activeIdx === 3) isStandby = false; }, 5000);
             } else {
@@ -89,6 +91,10 @@
             if (!l_mount) return;
             const pos = new THREE.Vector3();
             l_mount.getWorldPosition(pos);
+            // 手首より少し前方に弾を生成
+            const offset = new THREE.Vector3(0, 0, 0.5).applyQuaternion(coreModel.quaternion);
+            pos.add(offset);
+
             gltfLoader.load('./magicball.glb', (data) => {
                 const obj = data.scene;
                 obj.position.copy(pos);
@@ -237,8 +243,11 @@
                     }
                     if (handVfx && handVfx.visible && l_mount) {
                         const p = new THREE.Vector3(); l_mount.getWorldPosition(p);
-                        handVfx.position.copy(p);
-                        handVfx.rotation.x -= 0.05; handVfx.rotation.y -= 0.05;
+                        // 手首より少し前方（coreModelの向きに基づく）に配置
+                        const offset = new THREE.Vector3(0, 0, 0.3).applyQuaternion(coreModel.quaternion);
+                        handVfx.position.copy(p).add(offset);
+                        // モデルの向きに合わせて垂直に保つ
+                        handVfx.rotation.y = coreModel.rotation.y;
                     }
                     for (let i = projectiles.length - 1; i >= 0; i--) {
                         projectiles[i].mesh.position.add(projectiles[i].v.clone().multiplyScalar(0.4));
