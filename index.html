@@ -19,10 +19,16 @@
             display: flex; align-items: center; justify-content: center; color: white; font-size: 10px; font-weight: bold;
         }
         .slot.active { border-color: #ffaa00; background: rgba(255, 170, 0, 0.4); }
+        #reticle {
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 8px; height: 8px; border: 2px solid rgba(0, 255, 0, 0.8);
+            border-radius: 50%; pointer-events: none; z-index: 100;
+        }
     </style>
 </head>
 <body>
     <div id="overlay">CLICK TO START<br>(1:殴り 2:剣 3:魔法 / V:しゃがみ)</div>
+    <div id="reticle"></div>
     <div id="inventory">
         <div class="slot active" id="slot-1">殴り</div>
         <div class="slot" id="slot-2">剣</div>
@@ -66,7 +72,7 @@
             leftHandBone.getWorldPosition(handPos);
 
             vfxFront.visible = true;
-            vfxFront.scale.set(0.33, 0.33, 0.33); // 3分の1
+            vfxFront.scale.set(0.33, 0.33, 0.33);
             vfxFront.position.copy(handPos);
             vfxFront.quaternion.copy(model.quaternion);
             setTimeout(() => { vfxFront.visible = false; }, 500);
@@ -74,6 +80,7 @@
             loader.load('./magicball.glb', (gltf) => {
                 const ball = gltf.scene;
                 ball.position.copy(handPos);
+                // 正面に向かって発射
                 const direction = new THREE.Vector3(0, 0, 1).applyQuaternion(model.quaternion);
                 scene.add(ball);
                 magicBalls.push({ mesh: ball, dir: direction, life: 100 });
@@ -113,6 +120,7 @@
             camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
             document.body.appendChild(renderer.domElement);
 
             scene.add(new THREE.HemisphereLight(0xffffff, 0x888888, 1.5));
@@ -147,7 +155,7 @@
                     if(rightHandBone) {
                         rightHandBone.add(swordMesh);
                         swordMesh.rotation.x = Math.PI / 2;
-                        swordMesh.rotation.z = Math.PI; 
+                        swordMesh.rotation.z = Math.PI;
                     }
                 });
 
@@ -169,7 +177,7 @@
                                 if (index === 25) { actions['punch'] = action; action.setLoop(THREE.LoopOnce); }
                                 if (index === 42) actions['sword_idle'] = action;
                                 if (index === 40) { actions['sword_attack'] = action; action.setLoop(THREE.LoopOnce); }
-                                if (index === 33) { actions['magic_start'] = action; action.setLoop(THREE.LoopOnce); action.clampWhenFinished = true;}
+                                if (index === 33) { actions['magic_start'] = action; action.setLoop(THREE.LoopOnce); action.clampWhenFinished = true; }
                                 if (index === 35) actions['magic_pose'] = action;
                                 if (index === 36) { actions['magic_fire'] = action; action.setLoop(THREE.LoopOnce); }
                                 if (index === 34) { actions['magic_end'] = action; action.setLoop(THREE.LoopOnce); }
@@ -191,7 +199,12 @@
                 if (['1','2','3'].includes(k)) changeEquip(parseInt(k));
             };
             window.onkeyup = (e) => { if (['e','s','q','c'].includes(e.key.toLowerCase())) moveState[e.key.toLowerCase()] = false; };
-            window.addEventListener('mousemove', (e) => { if (document.pointerLockElement === document.body) { cameraAzimuth -= e.movementX * 0.002; cameraElevation = Math.max(-0.4, Math.min(1.2, cameraElevation + e.movementY * 0.002)); } });
+            window.addEventListener('mousemove', (e) => { 
+                if (document.pointerLockElement === document.body) { 
+                    cameraAzimuth -= e.movementX * 0.002; 
+                    cameraElevation = Math.max(-0.7, Math.min(1.1, cameraElevation + e.movementY * 0.002)); 
+                } 
+            });
 
             clock = new THREE.Clock();
             function animate() {
@@ -203,19 +216,22 @@
                     let inputZ = (moveState.e ? -1 : 0) + (moveState.s ? 1 : 0);
                     const isMoving = (inputX !== 0 || inputZ !== 0);
 
+                    // --- 滑らかな旋回と移動の統合 ---
                     if (isMoving && !isAttacking) {
                         const targetRotation = Math.atan2(inputX, inputZ) + cameraAzimuth;
                         let diff = targetRotation - model.rotation.y;
                         while (diff < -Math.PI) diff += Math.PI * 2;
                         while (diff > Math.PI) diff -= Math.PI * 2;
-                        model.rotation.y += diff * 0.15;
+                        model.rotation.y += diff * 0.15; // ここで滑らかに回転
 
-                        const speed = (moveState.e && !isCrouching && !moveState.s && !moveState.q && !moveState.c) ? 0.14 : 0.07;
+                        const onlyForward = (moveState.e && !moveState.s && !moveState.q && !moveState.c);
+                        const speed = (onlyForward && !isCrouching) ? 0.14 : 0.07;
                         model.position.x += Math.sin(model.rotation.y) * speed;
                         model.position.z += Math.cos(model.rotation.y) * speed;
                     }
                     updateMotion();
 
+                    // VFXと魔法弾の処理
                     if (vfxGround && vfxGround.visible) vfxGround.position.copy(model.position);
                     if (vfxFront && vfxFront.visible && leftHandBone) {
                         const handPos = new THREE.Vector3();
@@ -228,6 +244,7 @@
                         if (magicBalls[i].life-- <= 0) { scene.remove(magicBalls[i].mesh); magicBalls.splice(i, 1); }
                     }
 
+                    // 高さ・ジャンプ処理
                     if (isJumping) {
                         model.position.y += velocityY; velocityY -= 0.008;
                         if (velocityY < 0 && currentAction === actions['jump_start']) fadeToAction('jump_loop', 0.3);
@@ -237,12 +254,30 @@
                             setTimeout(() => { canJump = true; updateMotion(); }, 300);
                         }
                     } else {
-                        model.position.y += ((isCrouching ? -0.4 : 0) - model.position.y) * 0.1;
+                        const targetY = isCrouching ? -0.4 : 0;
+                        model.position.y += (targetY - model.position.y) * 0.1;
                     }
 
-                    const dist = 5;
-                    camera.position.set(model.position.x + dist * Math.sin(cameraAzimuth) * Math.cos(cameraElevation), model.position.y + 1.8 + dist * Math.sin(cameraElevation), model.position.z + dist * Math.cos(cameraAzimuth) * Math.cos(cameraElevation));
-                    camera.lookAt(model.position.x, model.position.y + 1.2, model.position.z);
+                    // --- TPSカメラ制御（モデル追従型） ---
+                    const camDist = 2.4, camSide = 1.0, camHeight = 1.5;
+                    const hDist = camDist * Math.cos(cameraElevation);
+                    const vDist = camDist * Math.sin(cameraElevation);
+
+                    let camX = model.position.x + hDist * Math.sin(cameraAzimuth);
+                    let camZ = model.position.z + hDist * Math.cos(cameraAzimuth);
+                    let camY = model.position.y + camHeight + vDist;
+
+                    camX += Math.cos(cameraAzimuth) * camSide;
+                    camZ -= Math.sin(cameraAzimuth) * camSide;
+
+                    camera.position.set(camX, camY, camZ);
+                    const lookDist = 20;
+                    const lookTarget = new THREE.Vector3(
+                        camera.position.x - Math.sin(cameraAzimuth) * lookDist,
+                        camera.position.y - Math.sin(cameraElevation) * lookDist,
+                        camera.position.z - Math.cos(cameraAzimuth) * lookDist
+                    );
+                    camera.lookAt(lookTarget);
                 }
                 renderer.render(scene, camera);
             }
