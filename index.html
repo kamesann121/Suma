@@ -37,11 +37,13 @@
 
     <script>
         let scene, camera, renderer, clock, mixer, model;
+        let vfxMixer; // 魔法陣用
         let moveState = { q: false, e: false, c: false, s: false };
         let velocityY = 0, isJumping = false, canJump = true, isCrouching = false, isAttacking = false;
         let currentEquip = 1, actions = {}, currentAction;
         let rightHandBone, leftHandBone, swordMesh;
         let vfxGround, vfxFront, magicBalls = [], cameraAzimuth = 0, cameraElevation = 0.2;
+        let isCharging = false;
         const loader = new THREE.GLTFLoader();
 
         function fadeToAction(name, duration = 0.2) {
@@ -55,39 +57,60 @@
 
         async function changeEquip(newSlot) {
             if (currentEquip === newSlot || isAttacking) return;
+            
+            // 魔法解除時のクリーンアップ
             if (currentEquip === 3) {
+                isCharging = false;
+                if (vfxGround) vfxGround.visible = false;
+                if (vfxFront) vfxFront.visible = false;
                 fadeToAction('magic_end', 0.2);
                 await new Promise(r => setTimeout(r, 400));
             }
+
             currentEquip = newSlot;
             document.querySelectorAll('.slot').forEach((s, i) => s.classList.toggle('active', i === newSlot - 1));
             if (swordMesh) swordMesh.visible = (newSlot === 2);
-            if (newSlot === 3) fadeToAction('magic_start', 0.2);
-            else updateMotion();
+
+            if (newSlot === 3) {
+                isCharging = true;
+                fadeToAction('magic_start', 0.2);
+                
+                // 地面の魔法陣（magic.glb）の準備
+                if (vfxGround) {
+                    vfxGround.visible = true;
+                    vfxGround.position.y = -1.0; // 地面下からスタート
+                    if (vfxMixer) {
+                        const chargeAnim = vfxMixer.clipAction(vfxGround.animations[0]);
+                        chargeAnim.reset().play();
+                    }
+                }
+
+                // 手元のエフェクト（magic2.glb）の準備
+                if (vfxFront) {
+                    vfxFront.visible = true;
+                    vfxFront.scale.set(0.11, 0.11, 0.11); // 3分の1のサイズ
+                }
+
+                // 5秒間のチャージ（移動不可・攻撃不可）
+                setTimeout(() => {
+                    if (currentEquip === 3) isCharging = false;
+                }, 5000);
+            } else {
+                updateMotion();
+            }
         }
 
         function fireMagicBall() {
-            if (!leftHandBone || !vfxFront) return;
+            if (!leftHandBone) return;
             const handPos = new THREE.Vector3();
             leftHandBone.getWorldPosition(handPos);
-
-            vfxFront.visible = true;
-            vfxFront.scale.set(0.33, 0.33, 0.33);
-            vfxFront.position.copy(handPos);
-            vfxFront.quaternion.copy(model.quaternion);
-            setTimeout(() => { vfxFront.visible = false; }, 500);
 
             loader.load('./magicball.glb', (gltf) => {
                 const ball = gltf.scene;
                 ball.position.copy(handPos);
-
-                // --- 【修正：弾丸を青く光らせる】 ---
                 ball.traverse(n => {
-                    if (n.isMesh) {
-                        n.material = new THREE.MeshBasicMaterial({ color: 0x00aaff });
-                    }
+                    if (n.isMesh) n.material = new THREE.MeshBasicMaterial({ color: 0x00aaff });
                 });
-
                 const direction = new THREE.Vector3(0, 0, 1).applyQuaternion(model.quaternion);
                 scene.add(ball);
                 magicBalls.push({ mesh: ball, dir: direction, life: 100 });
@@ -95,13 +118,13 @@
         }
 
         function performAttack() {
-            if (isAttacking || isJumping) return;
+            if (isAttacking || isJumping || isCharging) return;
             isAttacking = true;
             let anim = (currentEquip === 2) ? 'sword_attack' : (currentEquip === 3 ? 'magic_fire' : 'punch');
-            if (currentEquip === 3) fireMagicBall();
-            fadeToAction(anim, 0.1);
             
-            // 800ms後に状態を戻すが、その間アニメーションが止まらないようclampを設定済み
+            if (currentEquip === 3) fireMagicBall();
+            
+            fadeToAction(anim, 0.1);
             setTimeout(() => { 
                 isAttacking = false; 
                 updateMotion(); 
@@ -109,7 +132,7 @@
         }
 
         function updateMotion() {
-            if (isAttacking || isJumping) return;
+            if (isAttacking || isJumping || (currentEquip === 3)) return; // 魔法装備中は基本モーション更新停止
             let inputX = (moveState.q ? -1 : 0) + (moveState.c ? 1 : 0);
             let inputZ = (moveState.e ? -1 : 0) + (moveState.s ? 1 : 0);
             const isMoving = (inputX !== 0 || inputZ !== 0);
@@ -121,7 +144,6 @@
                 else fadeToAction('walk', 0.2);
             } else {
                 if (currentEquip === 2) fadeToAction('sword_idle', 0.2);
-                else if (currentEquip === 3) fadeToAction('magic_pose', 0.3);
                 else fadeToAction(isCrouching ? 'crouch_idle' : 'idle', 0.2);
             }
         }
@@ -145,8 +167,18 @@
                 } else if (e.button === 0) performAttack();
             });
 
-            loader.load('./magic.glb', (gltf) => { vfxGround = gltf.scene; vfxGround.visible = false; scene.add(vfxGround); });
-            loader.load('./magic2.glb', (gltf) => { vfxFront = gltf.scene; vfxFront.visible = false; scene.add(vfxFront); });
+            loader.load('./magic.glb', (gltf) => { 
+                vfxGround = gltf.scene; 
+                vfxGround.visible = false; 
+                vfxGround.animations = gltf.animations;
+                vfxMixer = new THREE.AnimationMixer(vfxGround);
+                scene.add(vfxGround); 
+            });
+            loader.load('./magic2.glb', (gltf) => { 
+                vfxFront = gltf.scene; 
+                vfxFront.visible = false; 
+                scene.add(vfxFront); 
+            });
 
             loader.load('./m.glb', (gltf) => {
                 model = gltf.scene;
@@ -191,7 +223,6 @@
                                 if (index === 40) { actions['sword_attack'] = action; action.setLoop(THREE.LoopOnce); action.clampWhenFinished = true; }
                                 if (index === 33) { actions['magic_start'] = action; action.setLoop(THREE.LoopOnce); action.clampWhenFinished = true; }
                                 if (index === 35) actions['magic_pose'] = action;
-                                // --- 【修正：魔法発射後のTポーズ防止】 ---
                                 if (index === 36) { actions['magic_fire'] = action; action.setLoop(THREE.LoopOnce); action.clampWhenFinished = true; }
                                 if (index === 34) { actions['magic_end'] = action; action.setLoop(THREE.LoopOnce); action.clampWhenFinished = true; }
                             }
@@ -224,12 +255,16 @@
                 requestAnimationFrame(animate);
                 const delta = clock.getDelta();
                 if (mixer) mixer.update(delta);
+                if (vfxMixer) vfxMixer.update(delta);
+
                 if (model) {
+                    // 魔法装備中は動けない
+                    const canMove = !isAttacking && currentEquip !== 3;
                     let inputX = (moveState.q ? -1 : 0) + (moveState.c ? 1 : 0);
                     let inputZ = (moveState.e ? -1 : 0) + (moveState.s ? 1 : 0);
                     const isMoving = (inputX !== 0 || inputZ !== 0);
 
-                    if (isMoving && !isAttacking) {
+                    if (canMove && isMoving) {
                         const targetRotation = Math.atan2(inputX, inputZ) + cameraAzimuth;
                         let diff = targetRotation - model.rotation.y;
                         while (diff < -Math.PI) diff += Math.PI * 2;
@@ -243,18 +278,26 @@
                     }
                     updateMotion();
 
-                    if (vfxGround && vfxGround.visible) vfxGround.position.copy(model.position);
+                    // 魔法陣と手元エフェクトの更新
+                    if (vfxGround && vfxGround.visible) {
+                        vfxGround.position.set(model.position.x, vfxGround.position.y, model.position.z);
+                        if (vfxGround.position.y < 0) vfxGround.position.y += 0.01;
+                        vfxGround.rotation.y += 0.02;
+                    }
                     if (vfxFront && vfxFront.visible && leftHandBone) {
                         const handPos = new THREE.Vector3();
                         leftHandBone.getWorldPosition(handPos);
                         vfxFront.position.copy(handPos);
-                        vfxFront.quaternion.copy(model.quaternion);
+                        vfxFront.rotation.y += 0.05;
+                        vfxFront.rotation.z += 0.02;
                     }
+
                     for (let i = magicBalls.length - 1; i >= 0; i--) {
                         magicBalls[i].mesh.position.add(magicBalls[i].dir.clone().multiplyScalar(0.4));
                         if (magicBalls[i].life-- <= 0) { scene.remove(magicBalls[i].mesh); magicBalls.splice(i, 1); }
                     }
 
+                    // ジャンプ・高さ処理
                     if (isJumping) {
                         model.position.y += velocityY; velocityY -= 0.008;
                         if (velocityY < 0 && currentAction === actions['jump_start']) fadeToAction('jump_loop', 0.3);
@@ -264,27 +307,24 @@
                             setTimeout(() => { canJump = true; updateMotion(); }, 300);
                         }
                     } else {
-                        const targetY = isCrouching ? -0.4 : 0;
+                        const targetY = (isCrouching && currentEquip !== 3) ? -0.4 : 0;
                         model.position.y += (targetY - model.position.y) * 0.1;
                     }
 
+                    // TPSカメラ
                     const camDist = 2.4, camSide = 1.0, camHeight = 1.5;
                     const hDist = camDist * Math.cos(cameraElevation);
                     const vDist = camDist * Math.sin(cameraElevation);
-
                     let camX = model.position.x + hDist * Math.sin(cameraAzimuth);
                     let camZ = model.position.z + hDist * Math.cos(cameraAzimuth);
                     let camY = model.position.y + camHeight + vDist;
-
                     camX += Math.cos(cameraAzimuth) * camSide;
                     camZ -= Math.sin(cameraAzimuth) * camSide;
-
                     camera.position.set(camX, camY, camZ);
-                    const lookDist = 20;
                     const lookTarget = new THREE.Vector3(
-                        camera.position.x - Math.sin(cameraAzimuth) * lookDist,
-                        camera.position.y - Math.sin(cameraElevation) * lookDist,
-                        camera.position.z - Math.cos(cameraAzimuth) * lookDist
+                        camera.position.x - Math.sin(cameraAzimuth) * 20,
+                        camera.position.y - Math.sin(cameraElevation) * 20,
+                        camera.position.z - Math.cos(cameraAzimuth) * 20
                     );
                     camera.lookAt(lookTarget);
                 }
