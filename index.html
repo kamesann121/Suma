@@ -25,33 +25,48 @@
             border-radius: 50%; pointer-events: none; z-index: 100;
         }
         #magic-charge {
-            position: fixed; top: 80px; left: 50%; transform: translateX(-50%);
-            width: 120px; height: 120px; display: none; z-index: 150;
+            position: fixed; bottom: 90px; right: 20px;
+            width: 200px; display: none; z-index: 150;
         }
-        .charge-circle {
-            width: 100%; height: 100%; border-radius: 50%;
-            background: conic-gradient(#a855f7 0deg, #6366f1 360deg);
-            display: flex; align-items: center; justify-content: center;
-            box-shadow: 0 0 30px rgba(168, 85, 247, 0.8);
-            animation: pulse 2s infinite;
+        .magic-label {
+            color: white; font-size: 12px; margin-bottom: 5px;
+            text-shadow: 0 0 5px rgba(168, 85, 247, 0.8);
+            font-weight: bold;
         }
-        .charge-inner {
-            width: 90%; height: 90%; border-radius: 50%;
-            background: rgba(0, 0, 0, 0.9); display: flex;
-            align-items: center; justify-content: center; flex-direction: column;
-            color: #a855f7; font-weight: bold; font-size: 14px;
+        .magic-bar-container {
+            width: 100%; height: 25px;
+            background: rgba(0, 0, 0, 0.6);
+            border: 2px solid #a855f7;
+            border-radius: 6px;
+            overflow: hidden;
+            box-shadow: 0 0 15px rgba(168, 85, 247, 0.5);
         }
-        .charge-ready {
-            animation: glow 1s infinite;
-            color: #4ade80 !important;
+        .magic-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #a855f7, #6366f1);
+            width: 0%;
+            transition: width 0.1s linear;
+            position: relative;
         }
-        @keyframes pulse {
-            0%, 100% { transform: scale(1); }
-            50% { transform: scale(1.05); }
+        .magic-bar-fill.ready {
+            background: linear-gradient(90deg, #4ade80, #22c55e);
+            animation: glow-bar 1s infinite;
         }
-        @keyframes glow {
-            0%, 100% { text-shadow: 0 0 10px #4ade80, 0 0 20px #4ade80; }
-            50% { text-shadow: 0 0 20px #4ade80, 0 0 40px #4ade80; }
+        .magic-bar-text {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-size: 11px;
+            font-weight: bold;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
+            width: 200px;
+            text-align: center;
+        }
+        @keyframes glow-bar {
+            0%, 100% { box-shadow: 0 0 10px #4ade80 inset; }
+            50% { box-shadow: 0 0 20px #4ade80 inset; }
         }
     </style>
 </head>
@@ -59,10 +74,10 @@
     <div id="gui-overlay">START APPLICATION<br>(Keys 1, 2, 3 / V: Squat)</div>
     <div id="aim-mark"></div>
     <div id="magic-charge">
-        <div class="charge-circle">
-            <div class="charge-inner" id="charge-text">
-                <div>魔力</div>
-                <div id="charge-value">0%</div>
+        <div class="magic-label">魔力</div>
+        <div class="magic-bar-container">
+            <div class="magic-bar-fill" id="magic-bar">
+                <div class="magic-bar-text" id="magic-text">0%</div>
             </div>
         </div>
     </div>
@@ -123,7 +138,6 @@
                         }
                     }, 16);
                 }
-                if (handVfx) handVfx.visible = false;
                 // チャージゲージを非表示
                 document.getElementById('magic-charge').style.display = 'none';
                 switchMotion('m_end', 0.2);
@@ -165,10 +179,6 @@
                     }, 16);
                     if (effectMixer) effectMixer.clipAction(baseVfx.animations[0]).reset().play();
                 }
-                if (handVfx) {
-                    handVfx.visible = true;
-                    handVfx.scale.set(0.11, 0.11, 0.11); 
-                }
                 // チャージゲージを表示
                 document.getElementById('magic-charge').style.display = 'block';
                 setTimeout(() => { if (activeIdx === 3) isStandby = false; }, 5000);
@@ -184,6 +194,18 @@
             gltfLoader.load('./magicball.glb', (data) => {
                 const obj = data.scene;
                 obj.position.copy(pos);
+                
+                // マテリアルを保持（黒くならないように）
+                obj.traverse((node) => {
+                    if (node.isMesh) {
+                        // オリジナルのマテリアルをクローンして使用
+                        if (node.material) {
+                            node.material = node.material.clone();
+                            node.material.needsUpdate = true;
+                        }
+                    }
+                });
+                
                 const vec = new THREE.Vector3(0, 0, 1).applyQuaternion(coreModel.quaternion);
                 scene.add(obj);
                 projectiles.push({ mesh: obj, v: vec, ttl: 100 });
@@ -197,7 +219,14 @@
             if (procActive || inAir || isStandby) return;
             procActive = true;
             let mId = (activeIdx === 2) ? 'm_action2' : (activeIdx === 3 ? 'm_action3' : 'm_action1');
-            if (activeIdx === 3) emitObj();
+            if (activeIdx === 3) {
+                emitObj();
+                // 魔法モーションを毎回確実に再生
+                if (motionLib['m_action3']) {
+                    motionLib['m_action3'].stop();
+                    motionLib['m_action3'].reset();
+                }
+            }
             switchMotion(mId, 0.1);
             setTimeout(() => { procActive = false; refreshMove(); }, 800);
         }
@@ -313,15 +342,19 @@
                 if (activeIdx === 3 && !isStandby) {
                     magicChargeTime += dt;
                     const chargePercent = Math.min(100, (magicChargeTime / MAGIC_CHARGE_DURATION) * 100);
-                    document.getElementById('charge-value').textContent = Math.floor(chargePercent) + '%';
+                    const barFill = document.getElementById('magic-bar');
+                    const barText = document.getElementById('magic-text');
+                    
+                    barFill.style.width = chargePercent + '%';
+                    barText.textContent = Math.floor(chargePercent) + '%';
                     
                     if (chargePercent >= 100 && !magicReady) {
                         magicReady = true;
-                        document.getElementById('charge-text').classList.add('charge-ready');
-                        document.getElementById('charge-value').textContent = 'Ready!';
+                        barFill.classList.add('ready');
+                        barText.textContent = 'Ready!';
                     } else if (chargePercent < 100) {
                         magicReady = false;
-                        document.getElementById('charge-text').classList.remove('charge-ready');
+                        barFill.classList.remove('ready');
                     }
                 }
 
@@ -345,21 +378,6 @@
                         baseVfx.position.set(coreModel.position.x, baseVfx.position.y, coreModel.position.z);
                         if (baseVfx.position.y < 0) baseVfx.position.y += 0.01;
                         baseVfx.rotation.y += 0.02;
-                    }
-                    if (handVfx && handVfx.visible && l_mount) {
-                        const p = new THREE.Vector3(); 
-                        l_mount.getWorldPosition(p);
-                        
-                        // ドクターストレンジ風：手のひらの前に配置
-                        const handDir = new THREE.Vector3(0, 0, 1); // 手の前方向
-                        handDir.applyQuaternion(l_mount.getWorldQuaternion(new THREE.Quaternion()));
-                        p.add(handDir.multiplyScalar(0.15)); // 手のひらの15cm前
-                        
-                        handVfx.position.copy(p);
-                        
-                        // 垂直に配置（地面から垂直）
-                        handVfx.rotation.set(Math.PI / 2, 0, 0); // X軸90度回転で垂直
-                        handVfx.rotation.y += 0.05; // Y軸回転のみ追加
                     }
                     for (let i = projectiles.length - 1; i >= 0; i--) {
                         projectiles[i].mesh.position.add(projectiles[i].v.clone().multiplyScalar(0.4));
