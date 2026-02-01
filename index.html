@@ -24,11 +24,48 @@
             width: 8px; height: 8px; border: 2px solid rgba(0, 255, 0, 0.8);
             border-radius: 50%; pointer-events: none; z-index: 100;
         }
+        #magic-charge {
+            position: fixed; top: 80px; left: 50%; transform: translateX(-50%);
+            width: 120px; height: 120px; display: none; z-index: 150;
+        }
+        .charge-circle {
+            width: 100%; height: 100%; border-radius: 50%;
+            background: conic-gradient(#a855f7 0deg, #6366f1 360deg);
+            display: flex; align-items: center; justify-content: center;
+            box-shadow: 0 0 30px rgba(168, 85, 247, 0.8);
+            animation: pulse 2s infinite;
+        }
+        .charge-inner {
+            width: 90%; height: 90%; border-radius: 50%;
+            background: rgba(0, 0, 0, 0.9); display: flex;
+            align-items: center; justify-content: center; flex-direction: column;
+            color: #a855f7; font-weight: bold; font-size: 14px;
+        }
+        .charge-ready {
+            animation: glow 1s infinite;
+            color: #4ade80 !important;
+        }
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+        @keyframes glow {
+            0%, 100% { text-shadow: 0 0 10px #4ade80, 0 0 20px #4ade80; }
+            50% { text-shadow: 0 0 20px #4ade80, 0 0 40px #4ade80; }
+        }
     </style>
 </head>
 <body>
     <div id="gui-overlay">START APPLICATION<br>(Keys 1, 2, 3 / V: Squat)</div>
     <div id="aim-mark"></div>
+    <div id="magic-charge">
+        <div class="charge-circle">
+            <div class="charge-inner" id="charge-text">
+                <div>魔力</div>
+                <div id="charge-value">0%</div>
+            </div>
+        </div>
+    </div>
     <div id="ui-bar">
         <div class="item-slot selected" id="s-1">Mode 1</div>
         <div class="item-slot" id="s-2">Mode 2</div>
@@ -44,6 +81,9 @@
         let r_mount, l_mount, subAsset;
         let baseVfx, handVfx, projectiles = [], camRotX = 0, camRotY = 0.2;
         let isStandby = false;
+        let magicChargeTime = 0; // 魔法のチャージ時間
+        let magicReady = false; // 魔法が使用可能か
+        const MAGIC_CHARGE_DURATION = 5; // 5秒
         const gltfLoader = new THREE.GLTFLoader();
 
         function switchMotion(id, gap = 0.2) {
@@ -59,8 +99,33 @@
             if (activeIdx === idx || procActive) return;
             if (activeIdx === 3) {
                 isStandby = false;
-                if (baseVfx) baseVfx.visible = false;
+                // 魔法陣を魔法っぽく消す
+                if (baseVfx) {
+                    // フェードアウト＋下降アニメーション
+                    let fadeTime = 0;
+                    const fadeInterval = setInterval(() => {
+                        fadeTime += 0.016;
+                        if (baseVfx) {
+                            baseVfx.traverse(node => {
+                                if (node.isMesh && node.material) {
+                                    if (!node.material.transparent) {
+                                        node.material.transparent = true;
+                                        node.material.opacity = 1;
+                                    }
+                                    node.material.opacity = Math.max(0, 1 - fadeTime * 2);
+                                }
+                            });
+                            baseVfx.position.y -= 0.02; // 下降
+                        }
+                        if (fadeTime >= 0.5) {
+                            clearInterval(fadeInterval);
+                            if (baseVfx) baseVfx.visible = false;
+                        }
+                    }, 16);
+                }
                 if (handVfx) handVfx.visible = false;
+                // チャージゲージを非表示
+                document.getElementById('magic-charge').style.display = 'none';
                 switchMotion('m_end', 0.2);
                 await new Promise(r => setTimeout(r, 400));
             }
@@ -69,17 +134,43 @@
             if (subAsset) subAsset.visible = (idx === 2);
             if (idx === 3) {
                 isStandby = true;
+                magicChargeTime = 0; // チャージリセット
+                magicReady = false;
                 switchMotion('m_start', 0.2);
                 if (baseVfx) {
                     baseVfx.visible = true;
-                    baseVfx.position.y = -1.0;
+                    baseVfx.position.y = -1.5; // 低い位置からスタート
+                    // 全マテリアルを透明に
+                    baseVfx.traverse(node => {
+                        if (node.isMesh && node.material) {
+                            node.material.transparent = true;
+                            node.material.opacity = 0;
+                        }
+                    });
+                    // フェードイン＋上昇アニメーション
+                    let fadeTime = 0;
+                    const fadeInterval = setInterval(() => {
+                        fadeTime += 0.016;
+                        if (baseVfx) {
+                            baseVfx.traverse(node => {
+                                if (node.isMesh && node.material) {
+                                    node.material.opacity = Math.min(1, fadeTime * 2);
+                                }
+                            });
+                            if (baseVfx.position.y < -1.0) {
+                                baseVfx.position.y += 0.02; // 上昇
+                            }
+                        }
+                        if (fadeTime >= 0.5) clearInterval(fadeInterval);
+                    }, 16);
                     if (effectMixer) effectMixer.clipAction(baseVfx.animations[0]).reset().play();
                 }
                 if (handVfx) {
                     handVfx.visible = true;
-                    // --- 修正：サイズを前回の3倍(0.11)に大きく設定 ---
                     handVfx.scale.set(0.11, 0.11, 0.11); 
                 }
+                // チャージゲージを表示
+                document.getElementById('magic-charge').style.display = 'block';
                 setTimeout(() => { if (activeIdx === 3) isStandby = false; }, 5000);
             } else {
                 refreshMove();
@@ -87,17 +178,19 @@
         }
 
         function emitObj() {
-            if (!l_mount) return;
+            if (!l_mount || !magicReady) return; // 魔法がReadyじゃないと撃てない
             const pos = new THREE.Vector3();
             l_mount.getWorldPosition(pos);
             gltfLoader.load('./magicball.glb', (data) => {
                 const obj = data.scene;
                 obj.position.copy(pos);
-                // モデル本来の見た目を活かす
                 const vec = new THREE.Vector3(0, 0, 1).applyQuaternion(coreModel.quaternion);
                 scene.add(obj);
                 projectiles.push({ mesh: obj, v: vec, ttl: 100 });
             });
+            // 魔法を撃ったらチャージリセット
+            magicChargeTime = 0;
+            magicReady = false;
         }
 
         function triggerAction() {
@@ -196,7 +289,6 @@
                 const k = e.key.toLowerCase();
                 if (['e','s','q','c'].includes(k)) keys[k] = true;
                 if (k === 'v') isLowPos = !isLowPos;
-                // 魔法装備時はジャンプ不可
                 if (k === ' ' && !inAir && jumpReady && activeIdx !== 3) { 
                     inAir = true; jumpReady = false; vertVel = 0.18; switchMotion('m_j_s', 0.1); 
                 }
@@ -216,6 +308,22 @@
                 const dt = clock.getDelta();
                 if (mainMixer) mainMixer.update(dt);
                 if (effectMixer) effectMixer.update(dt);
+
+                // 魔法チャージ更新
+                if (activeIdx === 3 && !isStandby) {
+                    magicChargeTime += dt;
+                    const chargePercent = Math.min(100, (magicChargeTime / MAGIC_CHARGE_DURATION) * 100);
+                    document.getElementById('charge-value').textContent = Math.floor(chargePercent) + '%';
+                    
+                    if (chargePercent >= 100 && !magicReady) {
+                        magicReady = true;
+                        document.getElementById('charge-text').classList.add('charge-ready');
+                        document.getElementById('charge-value').textContent = 'Ready!';
+                    } else if (chargePercent < 100) {
+                        magicReady = false;
+                        document.getElementById('charge-text').classList.remove('charge-ready');
+                    }
+                }
 
                 if (coreModel) {
                     const activeMove = !procActive && activeIdx !== 3;
@@ -239,10 +347,19 @@
                         baseVfx.rotation.y += 0.02;
                     }
                     if (handVfx && handVfx.visible && l_mount) {
-                        const p = new THREE.Vector3(); l_mount.getWorldPosition(p);
+                        const p = new THREE.Vector3(); 
+                        l_mount.getWorldPosition(p);
+                        
+                        // ドクターストレンジ風：手のひらの前に配置
+                        const handDir = new THREE.Vector3(0, 0, 1); // 手の前方向
+                        handDir.applyQuaternion(l_mount.getWorldQuaternion(new THREE.Quaternion()));
+                        p.add(handDir.multiplyScalar(0.15)); // 手のひらの15cm前
+                        
                         handVfx.position.copy(p);
-                        // 逆回転
-                        handVfx.rotation.x -= 0.05; handVfx.rotation.y -= 0.05;
+                        
+                        // 垂直に配置（地面から垂直）
+                        handVfx.rotation.set(Math.PI / 2, 0, 0); // X軸90度回転で垂直
+                        handVfx.rotation.y += 0.05; // Y軸回転のみ追加
                     }
                     for (let i = projectiles.length - 1; i >= 0; i--) {
                         projectiles[i].mesh.position.add(projectiles[i].v.clone().multiplyScalar(0.4));
